@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "status": "provisional",
+  "profile": "rv32-single-clock",
+  "xlen": 32,
+  "instruction_bits": 32,
+  "retire_lanes": 1,
+  "source_count": 4,
+  "timestamp_bits": 64,
+  "fifo_depth": 16,
+  "sink_width_bits": 64,
+  "sram_bytes": 32768,
+  "page_bytes": 1024,
+  "page_header_bytes": 64,
+  "max_record_bytes": 128,
+  "pre_pages": 16,
+  "post_pages": 16,
+  "trigger_slots": 4,
+  "target_clock_hz": 50000000,
+  "target": "simulation",
+  "board": null
+}

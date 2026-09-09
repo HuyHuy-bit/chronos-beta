@@ -1,0 +1,134 @@
+{
+  "status": "passed",
+  "phase": "P0 foundation",
+  "timestamp_utc": "2026-09-09T03:25:07.787483+00:00",
+  "smoke": {
+    "status": "passed",
+    "scope": "toolchain probes only; no Chronos datapath or CPU execution",
+    "simulation_cycles": 600,
+    "elf_class": 32,
+    "elf_machine": "RISC-V",
+    "entry_point": "0x1000",
+    "instruction_count": 9,
+    "firmware_executed": false
+  },
+  "synthesis": {
+    "status": "passed",
+    "scope": "toolchain probes only; no Chronos datapath or CPU execution",
+    "synthesis": "generic counter probe; no ASIC/FPGA closure claim"
+  },
+  "source_sha256": {
+    ".gitignore": "9acb3fe84a4bf8444c9e6c21f59b6d9c639c5eefea5f5f2259bbb5e4f7d7898f",
+    "Makefile": "474765bf8a8f198df5b73e23e7cbe1a5cadfd1a78db49ae4eac27e5861fb8c16",
+    "README.md": "dcf8561b6f0d053bffbcc128894653fc3a8aaf755a112b962378ec9aa490016c",
+    "configs/baseline.json": "745976e967389fe728b267f8b601727f1269fdea5470daad0215ea2685b9e9d6",
+    "docs/adr/0001-baseline.md": "ea70fa088b18ea7bd3e46bcebb99bff95d61dbaf36f7f175405f097b0d5d7d94",
+    "docs/adr/template.md": "22f5acc02c8e355ada4586210ee5cb217c8d3e991aab87416db6ee43d382c027",
+    "docs/architecture.md": "6ac473ce7bcc96a00fb476b4c091dbeadee2479e227d507994a619b9b6c939c4",
+    "docs/interfaces.md": "d47b3b25d54a82f4fe108ff56271c0a7be916c04ffb50073051e72f025233cd7",
+    "docs/requirements.md": "18a236fc3405805adae8fae8f6d4d35644e29a1e7417c65755db83609bdcdc79",
+    "docs/toolchain.md": "88768550bbc7b068a1380bb344ecbc954321c2e36751ca9859744ff2d969252f",
+    "docs/verification.md": "c08263e69b91cb775042de822bdc2e39821c6250ba5678b6dcfe382952010f7c",
+    "scripts/config.py": "5f2b56420ac93dae95ee5b69a861023eba126f858e7b04846c49afc1cf889462",
+    "scripts/doctor.py": "93f6104807b9aef2490c893505f45a57c290a44905f48fe450bd6e99fd64db7b",
+    "scripts/foundation.py": "1b2410a7e08e85a6b908fdba7a4ac656423c75c01fe677907066aa28e2fe8d31",
+    "scripts/smoke.py": "b9bbe45c9393f5604ab80765ad0791ef5af0fec741eec08796ddbeaba19beb35",
+    "spec/README.md": "1700068baf3b075a9173cab2ebdff8b6393a6b5a0733a2691c974140af16be17",
+    "spec/config.schema.json": "ca8af55687feab88d277848011c8d54bd31b48d0de0264ae32a63a69cfaaf903",
+    "tests/config/test_config.py": "e5f9d89830017e19c48fe2c10e29f0cf606761e7c999db65908d6e12d3bad601",
+    "tests/toolchain/firmware.c": "736ea97cb0410a3909f8dd48cef64d10962af7675781a9f897444ffcfae0c1a1",
+    "tests/toolchain/link.ld": "43139671ce9f1df6b52a8eac247c5f5510583a55baaf9827de41accb291b25ca",
+    "tests/toolchain/smoke.cpp": "51b0ed919efec632948ff6faca4d273b6ba31742b945f2a38c364de8ec48786b",
+    "tests/toolchain/start.S": "ce09144cd503e3ffea5fee1cf12ace38d6003a6159324d73eb2d725758a0420f",
+    "tests/toolchain/synth.ys": "82d9d5b46cb83476255197a268f86c49f78a2f530667c8265bf009a85cacbad3",
+    "tests/toolchain/toolchain_smoke.sv": "0e4728e2c7c8cbe89b94ccb32d8df76fc2fa5d596fcba32db864498b8d5bf667",
+    "third_party/manifest.json": "4b765f315d4e27c37df045e00c75579cef7319c4b903f1353edf67a83855af83"
+  },
+  "config_validation": "structure only; P1 capacity model pending",
+  "core_qualification": "pending acquisition and integration spike",
+  "board_qualification": "pending; no physical board available",
+  "formal_proofs": "not run; no Chronos RTL exists",
+  "tools": {
+    "git": {
+      "required": true,
+      "status": "available",
+      "version": "git version 2.34.1"
+    },
+    "make": {
+      "required": true,
+      "status": "available",
+      "version": "GNU Make 4.3"
+    },
+    "cxx": {
+      "required": true,
+      "status": "available",
+      "version": "g++ (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0"
+    },
+    "verilator": {
+      "required": true,
+      "status": "available",
+      "version": "Verilator 5.048 2026-04-26 rev v5.048-56-gc233a3905"
+    },
+    "riscv_cc": {
+      "required": true,
+      "status": "available",
+      "version": "riscv64-unknown-elf-gcc () 10.2.0"
+    },
+    "riscv_objdump": {
+      "required": true,
+      "status": "available",
+      "version": "GNU objdump () 2.35.1"
+    },
+    "yosys": {
+      "required": false,
+      "status": "available",
+      "version": "Yosys 0.68+195 (git sha1 435977e97-dirty, Release, Clang /usr/bin/clang++ 21.1.8)"
+    },
+    "sby": {
+      "required": false,
+      "status": "available",
+      "version": "SBY v0.68"
+    },
+    "z3": {
+      "required": false,
+      "status": "available",
+      "version": "Z3 version 4.15.5 - 64 bit"
+    },
+    "boolector": {
+      "required": false,
+      "status": "available",
+      "version": "3.2.4"
+    },
+    "vivado": {
+      "required": false,
+      "status": "unavailable"
+    },
+    "python": {
+      "required": true,
+      "version": "3.10.12 (main, Jun 22 2026, 18:55:27) [GCC 11.4.0]",
+      "status": "available"
+    }
+  },
+  "isolated_verification": {
+    "status": "passed",
+    "isolated_source_copy": "passed",
+    "private_plan_present": false,
+    "clean_build_smoke": {
+      "status": "passed",
+      "scope": "toolchain probes only; no Chronos datapath or CPU execution",
+      "simulation_cycles": 600,
+      "elf_class": 32,
+      "elf_machine": "RISC-V",
+      "entry_point": "0x1000",
+      "instruction_count": 9,
+      "firmware_executed": false
+    },
+    "optional_synthesis": {
+      "status": "unavailable",
+      "required_for_foundation": false
+    },
+    "invalid_required_tool_rejected": true,
+    "unavailable_explicit_synthesis_rejected": true
+  },
+  "evidence_scope": "P0 source/tool foundation only; no Chronos datapath or CPU execution"
+}

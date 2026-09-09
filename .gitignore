@@ -1,0 +1,15 @@
+/docs_plan/
+/build/
+/results/
+/.venv/
+/.local.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.vcd
+*.fst
+*.wdb
+*.jou
+*.log
+*.bit
+*.dcp

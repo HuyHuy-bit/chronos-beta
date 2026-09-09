@@ -1,0 +1,5 @@
+read_verilog -sv tests/toolchain/toolchain_smoke.sv
+hierarchy -check -top toolchain_smoke
+synth -top toolchain_smoke
+check -assert
+stat

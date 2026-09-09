@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Chronos provisional baseline configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "profile", "xlen", "instruction_bits", "retire_lanes", "source_count", "timestamp_bits", "fifo_depth", "sink_width_bits", "sram_bytes", "page_bytes", "page_header_bytes", "max_record_bytes", "pre_pages", "post_pages", "trigger_slots", "target_clock_hz", "target", "board"],
+  "properties": {
+    "schema_version": {"type": "integer", "enum": [1]},
+    "status": {"type": "string", "enum": ["provisional"]},
+    "profile": {"type": "string", "enum": ["rv32-single-clock"]},
+    "xlen": {"type": "integer", "enum": [32]},
+    "instruction_bits": {"type": "integer", "enum": [32]},
+    "retire_lanes": {"type": "integer", "enum": [1]},
+    "source_count": {"type": "integer", "minimum": 1, "maximum": 4},
+    "timestamp_bits": {"type": "integer", "enum": [64]},
+    "fifo_depth": {"type": "integer", "minimum": 2, "maximum": 256},
+    "sink_width_bits": {"type": "integer", "enum": [64]},
+    "sram_bytes": {"type": "integer", "minimum": 8192, "maximum": 131072},
+    "page_bytes": {"type": "integer", "enum": [256, 1024, 4096]},
+    "page_header_bytes": {"type": "integer", "enum": [64]},
+    "max_record_bytes": {"type": "integer", "enum": [128]},
+    "pre_pages": {"type": "integer", "minimum": 1},
+    "post_pages": {"type": "integer", "minimum": 1},
+    "trigger_slots": {"type": "integer", "minimum": 1, "maximum": 4},
+    "target_clock_hz": {"type": "integer", "minimum": 1},
+    "target": {"type": "string", "enum": ["simulation"]},
+    "board": {"type": "null"}
+  }
+}

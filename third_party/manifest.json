@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "acquired": [],
+  "candidates": [
+    {
+      "name": "ibex",
+      "source": "https://github.com/lowRISC/ibex.git",
+      "candidate_revision": "405c6d1d8220a18b2f9196141167a5875422dee4",
+      "revision_observed_utc_date": "2026-09-08",
+      "revision_evidence": "git ls-remote HEAD and refs/heads/master",
+      "status": "not_acquired",
+      "integration_status": "not_qualified",
+      "license_review": "pending review of acquired source and transitive dependencies",
+      "intended_location": "third_party/ibex"
+    }
+  ]
+}
