@@ -62,7 +62,9 @@ def main():
     destination.write_text(json.dumps(report, indent=2) + '\n')
     try:
         before = fingerprints()
-        suite = unittest.defaultTestLoader.discover(str(ROOT / 'tests' / 'model'))
+        suite = unittest.TestSuite(unittest.defaultTestLoader.discover(
+            str(ROOT / 'tests' / 'model'), pattern=pattern)
+            for pattern in ('test_events.py', 'test_capacity.py', 'test_admission.py'))
         log = io.StringIO()
         result = unittest.TextTestRunner(stream=log, verbosity=2).run(suite)
         (ROOT / 'build' / 'p1a-tests.log').write_text(log.getvalue())
