@@ -20,7 +20,7 @@ def _manifest(value, max_pages):
         raise DecodeError('unsupported manifest version or scope')
     if value['provenance'] != 'model' or value['source_profile'] != 'rv32-single-clock-v1':
         raise DecodeError('unsupported provenance or source profile')
-    if type(value['codecs']) is not list or value['codecs'] != ['raw-v1']:
+    if type(value['codecs']) is not list or value['codecs'] not in (['raw-v1'], ['compact-v1']):
         raise DecodeError('unsupported codecs')
     _uint(value['session_id'], 64, 'session_id')
     _uint(value['config_tag'], 64, 'config_tag')
@@ -49,9 +49,14 @@ def _pages(pages, manifest, max_events):
     decoded = []
     events = []
     previous = {}
+    decoder = decode_page
+    if manifest['codecs'] == ['compact-v1']:
+        from .compact_decode import decode_page as decoder
     for raw, entry in zip(pages, manifest['pages']):
-        page = decode_page(raw, page_bytes=manifest['page_bytes'],
-                           max_events=max_events - len(events))
+        budget = max_events - len(events)
+        if manifest['codecs'] == ['compact-v1']:
+            budget = min(budget, 100000)
+        page = decoder(raw, page_bytes=manifest['page_bytes'], max_events=budget)
         if page['session_id'] != manifest['session_id'] or page['config_tag'] != manifest['config_tag']:
             raise DecodeError('page identity does not match manifest')
         if (page['generation'] != entry['generation'] or len(page['events']) != entry['record_count']
@@ -84,7 +89,8 @@ def encode_fragment(pages, manifest):
     if len(data) > 65536 or 32 + len(data) + len(pages) * manifest['page_bytes'] > 16777216:
         raise ValueError('fragment exceeds encoder resource limits')
     _pages(pages, manifest, 100000)
-    preamble = bytearray(struct.pack('<8sBBHIIIII', b'CHRONOS\0', 1, 0, 32, len(data),
+    version = 1 if manifest['codecs'] == ['raw-v1'] else 2
+    preamble = bytearray(struct.pack('<8sBBHIIIII', b'CHRONOS\0', version, 0, 32, len(data),
                                     len(pages), manifest['page_bytes'], zlib.crc32(data), 0))
     struct.pack_into('<I', preamble, 28, zlib.crc32(preamble))
     return bytes(preamble) + data + b''.join(pages)
@@ -113,7 +119,7 @@ def decode_fragment(data, *, max_bytes=16777216, max_manifest_bytes=65536,
         raise DecodeError('fragment must be bytes within the input bound')
     if len(data) < 32:
         raise DecodeError('truncated fragment preamble')
-    if data[:8] != b'CHRONOS\0' or data[8:12] != b'\x01\x00\x20\x00':
+    if data[:8] != b'CHRONOS\0' or data[8] not in (1, 2) or data[9:12] != b'\x00\x20\x00':
         raise DecodeError('unsupported fragment magic, version, or header size')
     number = lambda offset: int.from_bytes(data[offset:offset + 4], 'little')
     if number(28) != zlib.crc32(data[:28] + bytes(4)):
@@ -135,6 +141,9 @@ def decode_fragment(data, *, max_bytes=16777216, max_manifest_bytes=65536,
     except (UnicodeError, ValueError, RecursionError) as error:
         raise DecodeError(f'invalid manifest: {error}') from error
     _manifest(manifest, max_pages)
+    expected_codec = ['raw-v1'] if data[8] == 1 else ['compact-v1']
+    if manifest['codecs'] != expected_codec:
+        raise DecodeError('fragment version does not match codec')
     if manifest['page_bytes'] != page_bytes or len(manifest['pages']) != count:
         raise DecodeError('manifest does not match preamble')
     if sum(entry['record_count'] for entry in manifest['pages']) > max_events:
