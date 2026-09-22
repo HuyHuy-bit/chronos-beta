@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def fingerprints():
     paths = [ROOT / '.gitignore', ROOT / 'Makefile']
-    for name in ('configs', 'spec', 'model', 'scripts', 'tests', 'third_party'):
+    for name in ('configs', 'spec', 'model', 'rtl', 'scripts', 'tests', 'third_party'):
         paths.extend(path for path in (ROOT / name).rglob('*')
                      if path.is_file() and '__pycache__' not in path.parts
                      and path.suffix != '.pyc')
