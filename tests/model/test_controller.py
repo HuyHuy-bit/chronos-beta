@@ -133,8 +133,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(cases, 6 * 128)
 
     def test_hardware_trigger_post_window_lifecycle_and_identical_reads(self):
-        controller = self.armed(post_ticks=2, match=lambda item: "fault" if item.kind == "USER_EVENT"
-                                and item.fields["value"] == 7 else None)
+        controller = self.armed(post_ticks=2, triggers=[dict(kinds=["USER_EVENT"], mode="equal", value=7,
+                                                             mask=0xFFFFFFFF)])
         self.cycle(controller, request(1), service=True)
         self.assertEqual(self.cycle(controller, user(7), service=True)["state"], "POST_TRIGGER")
         trigger_tick = self.tick
@@ -147,7 +147,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual((session, metadata["session_id"], metadata["config_tag"]), (1, 1, 1))
         self.assertEqual(metadata["terminal"]["reason"], "post_window")
         self.assertTrue(metadata["terminal"]["drain_complete"])
-        match = dict(source=3, lane=0, reason="fault")
+        match = dict(source=3, lane=0, reason="slot0")
         self.assertEqual(metadata["capture"]["trigger"],
                          dict(tick=trigger_tick, matches=[match], primary=match, software=False))
         self.assertEqual(max(event.tick for event in decoded["events"]), trigger_tick + 2)
@@ -162,13 +162,13 @@ class ControllerTests(unittest.TestCase):
                          dict(tick=tick, matches=[], primary=None, software=True))
         self.assertEqual(decoded["metadata"]["terminal"]["reason"], "post_window")
 
-        match = lambda item: "fault" if item.kind == "USER_EVENT" else None
-        merged = self.armed(match=match)
+        every_user = [dict(kinds=["USER_EVENT"], mode="equal", value=0, mask=0)]
+        merged = self.armed(triggers=every_user)
         self.cycle(merged, user(1), software_trigger=True)
-        self.assertEqual(merged.status()["trigger"], dict(tick=self.tick, matches=((3, 0, "fault"),),
-                                                          primary=(3, 0, "fault"), software=True))
+        self.assertEqual(merged.status()["trigger"], dict(tick=self.tick, matches=((3, 0, "slot0"),),
+                                                          primary=(3, 0, "slot0"), software=True))
 
-        later = self.armed(match=match)
+        later = self.armed(triggers=every_user)
         self.cycle(later, user(1))
         first = later.status()["trigger"]
         result = self.cycle(later, user(2), software_trigger=True)
@@ -263,7 +263,10 @@ class ControllerTests(unittest.TestCase):
         self.cycle(controller, configure=self.settings(post_ticks=0))
         invalid = (dict(config=dict(self.config), post_ticks=-1), dict(config=dict(self.config)),
                    self.settings(extra=1), self.settings(drain_limit=0), self.settings(drain_limit=1 << 32),
-                   self.settings(keep=1), self.settings(config=dict(self.config, pre_pages=8)),
+                   self.settings(keep_kinds=["NOPE"]), self.settings(keep=lambda item: True),
+                   self.settings(triggers=[dict(kinds=["RETIRE"], mode="range", base=8, limit=8)]),
+                   self.settings(triggers=[dict(kinds=["RETIRE"], mode="equal", value=0, mask=0)] * 5),
+                   self.settings(config=dict(self.config, pre_pages=8)),
                    self.settings(config=[]), self.settings(config=dict(self.config, post_pages=2, pre_pages=30)),
                    self.settings(codec='zip'))
         for settings in invalid:

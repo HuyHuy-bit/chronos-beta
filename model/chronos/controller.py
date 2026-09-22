@@ -1,31 +1,36 @@
+from scripts.config import validate
 from .events import normalize
+from .predicates import KINDS, keeper, matcher
 from .raw_encode import MAX_RECORD_BYTES
 from .snapshot import SnapshotCapture
 
 
 STATES = ('DISABLED', 'ARMED', 'POST_TRIGGER', 'DRAINING', 'FROZEN', 'CLEARING')
 COMMANDS = ('trace_reset', 'clear', 'configure', 'arm', 'stop', 'reset_source', 'software_trigger')
-_SETTINGS = ('config', 'post_ticks', 'keep', 'match', 'drain_limit', 'codec')
+_SETTINGS = ('config', 'post_ticks', 'keep_kinds', 'triggers', 'drain_limit', 'codec')
 _U64_MAX = (1 << 64) - 1
 
 
 def _prepare(settings):
     if not {'config', 'post_ticks'} <= settings.keys() <= set(_SETTINGS):
-        raise ValueError('settings require config and post_ticks and allow keep, match, drain_limit, codec')
+        raise ValueError('settings require config and post_ticks and allow keep_kinds, triggers, drain_limit, codec')
     config = settings['config']
     if type(config) is not dict:
         raise ValueError('config must be an object')
-    config = dict(config)
+    config = validate(dict(config))
     codec = settings.get('codec', 'raw-v1')
-    SnapshotCapture(config, post_ticks=settings['post_ticks'], keep=settings.get('keep'),
-                    match=settings.get('match'), codec=codec, measured=True)
+    keep_kinds = list(settings.get('keep_kinds', KINDS))
+    triggers = [None if slot is None else dict(slot) for slot in settings.get('triggers', [])]
+    keep = keeper(keep_kinds)
+    match = matcher(triggers, config['trigger_slots'])
+    SnapshotCapture(config, post_ticks=settings['post_ticks'], keep=keep, match=match, codec=codec, measured=True)
     grant_bytes = config['sink_width_bits'] // 8
     default = 4 * config['fifo_depth'] * -(-MAX_RECORD_BYTES // grant_bytes)
     drain_limit = settings.get('drain_limit', default)
     if type(drain_limit) is not int or not 1 <= drain_limit < 1 << 32:
         raise ValueError('drain_limit must be in 1..2**32-1')
-    return dict(config=config, post_ticks=settings['post_ticks'], keep=settings.get('keep'),
-                match=settings.get('match'), drain_limit=drain_limit, codec=codec)
+    return dict(config=config, post_ticks=settings['post_ticks'], keep_kinds=keep_kinds, triggers=triggers,
+                keep=keep, match=match, drain_limit=drain_limit, codec=codec)
 
 
 class CaptureController:

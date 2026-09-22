@@ -9,6 +9,7 @@ from model.chronos.capture_session import decode_capture, encode_capture
 from model.chronos.compact_encode import MIN_RECORD_BYTES, WATERMARK_END, encode_records
 from model.chronos.controller import CaptureController
 from model.chronos.events import Event, Observation
+from model.chronos.predicates import matcher
 from model.chronos.raw_decode import DecodeError
 from model.chronos.raw_encode import MAX_RECORD_BYTES, encode_record
 from model.chronos.retention import PageRing
@@ -230,7 +231,7 @@ class CompressedRetentionTests(unittest.TestCase):
     def test_full_queues_at_trigger_complete_within_the_smallest_safe_post_pool(self):
         expected = {(256, "raw-v1"): 24, (256, "compact-v1"): 32, (1024, "raw-v1"): 4,
                     (1024, "compact-v1"): 4, (4096, "raw-v1"): 1, (4096, "compact-v1"): 1}
-        match = lambda item: "fault" if item.kind == "USER_EVENT" and item.fields["value"] == 40 else None
+        match = matcher([dict(kinds=["USER_EVENT"], mode="equal", value=40, mask=0xFFFFFFFF)], 4)
         for (page_bytes, codec), post in expected.items():
             with self.subTest(page_bytes=page_bytes, codec=codec):
                 self.assertEqual(self.smallest_safe(page_bytes, codec), post)

@@ -1,0 +1,950 @@
+{
+  "schema_version": 1,
+  "status": "provisional-p1",
+  "word_bits": 32,
+  "window_bytes": 512,
+  "byte_order": "little",
+  "enums": {
+    "state": [
+      "DISABLED",
+      "ARMED",
+      "POST_TRIGGER",
+      "DRAINING",
+      "FROZEN",
+      "CLEARING"
+    ],
+    "outcome": [
+      "none",
+      "accepted",
+      "ignored",
+      "rejected",
+      "superseded"
+    ],
+    "stop_reason": [
+      "none",
+      "manual",
+      "post_window",
+      "capacity",
+      "sequence_exhausted",
+      "time_window_overflow",
+      "time_exhausted",
+      "epoch_exhausted",
+      "storage_failure"
+    ],
+    "storage_error": [
+      "none",
+      "post_capacity",
+      "generation_exhausted"
+    ],
+    "codec": [
+      "raw-v1",
+      "compact-v1"
+    ],
+    "trigger_mode": [
+      "equal",
+      "range"
+    ],
+    "kind": [
+      "RETIRE",
+      "TRAP",
+      "IRQ_ACCEPT",
+      "IRQ_PENDING",
+      "BUS_REQ",
+      "BUS_RESP",
+      "USER_EVENT"
+    ],
+    "lane": [
+      "0.0",
+      "1.0",
+      "1.1",
+      "2.0",
+      "2.1",
+      "3.0"
+    ],
+    "counter": [
+      "observed",
+      "filtered",
+      "admitted",
+      "ingress_dropped",
+      "reset_discarded",
+      "fifo_dropped",
+      "capacity_dropped",
+      "storage_discarded"
+    ]
+  },
+  "registers": [
+    {
+      "name": "CHRONOS_ID",
+      "offset": "0x000",
+      "access": "ro",
+      "group": "identity",
+      "fields": [
+        {
+          "name": "id",
+          "lsb": 0,
+          "width": 32,
+          "reset": 1314015299
+        }
+      ]
+    },
+    {
+      "name": "VERSION",
+      "offset": "0x004",
+      "access": "ro",
+      "group": "identity",
+      "fields": [
+        {
+          "name": "map_minor",
+          "lsb": 0,
+          "width": 8,
+          "reset": 0
+        },
+        {
+          "name": "map_major",
+          "lsb": 8,
+          "width": 8,
+          "reset": 1
+        }
+      ]
+    },
+    {
+      "name": "CAPS",
+      "offset": "0x008",
+      "access": "ro",
+      "group": "identity",
+      "fields": [
+        {
+          "name": "sources",
+          "lsb": 0,
+          "width": 3
+        },
+        {
+          "name": "trigger_slots",
+          "lsb": 3,
+          "width": 3
+        },
+        {
+          "name": "fifo_depth_log2",
+          "lsb": 6,
+          "width": 4
+        },
+        {
+          "name": "page_bytes_log2",
+          "lsb": 10,
+          "width": 4
+        },
+        {
+          "name": "codecs",
+          "lsb": 14,
+          "width": 2
+        },
+        {
+          "name": "max_record_bytes",
+          "lsb": 16,
+          "width": 8
+        },
+        {
+          "name": "sink_bytes",
+          "lsb": 24,
+          "width": 4
+        }
+      ]
+    },
+    {
+      "name": "CAPS_SRAM_BYTES",
+      "offset": "0x00C",
+      "access": "ro",
+      "group": "identity",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "CFG_SPLIT",
+      "offset": "0x020",
+      "access": "rw",
+      "group": "configuration",
+      "fields": [
+        {
+          "name": "pre_pages",
+          "lsb": 0,
+          "width": 16
+        },
+        {
+          "name": "post_pages",
+          "lsb": 16,
+          "width": 16
+        }
+      ]
+    },
+    {
+      "name": "CFG_MODE",
+      "offset": "0x024",
+      "access": "rw",
+      "group": "configuration",
+      "fields": [
+        {
+          "name": "codec",
+          "lsb": 0,
+          "width": 1,
+          "enum": "codec"
+        },
+        {
+          "name": "keep_kinds",
+          "lsb": 8,
+          "width": 7,
+          "reset": 127
+        }
+      ]
+    },
+    {
+      "name": "CFG_POST_TICKS_LO",
+      "offset": "0x028",
+      "access": "rw",
+      "group": "configuration",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "CFG_POST_TICKS_HI",
+      "offset": "0x02C",
+      "access": "rw",
+      "group": "configuration",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "CFG_DRAIN_LIMIT",
+      "offset": "0x030",
+      "access": "rw",
+      "group": "configuration",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "COMMAND",
+      "offset": "0x040",
+      "access": "wo",
+      "group": "commands",
+      "fields": [
+        {
+          "name": "trace_reset",
+          "lsb": 0,
+          "width": 1
+        },
+        {
+          "name": "clear",
+          "lsb": 1,
+          "width": 1
+        },
+        {
+          "name": "configure",
+          "lsb": 2,
+          "width": 1
+        },
+        {
+          "name": "arm",
+          "lsb": 3,
+          "width": 1
+        },
+        {
+          "name": "stop",
+          "lsb": 4,
+          "width": 1
+        },
+        {
+          "name": "reset_source",
+          "lsb": 5,
+          "width": 1
+        },
+        {
+          "name": "software_trigger",
+          "lsb": 6,
+          "width": 1
+        },
+        {
+          "name": "reset_source_id",
+          "lsb": 7,
+          "width": 2
+        }
+      ]
+    },
+    {
+      "name": "STATUS",
+      "offset": "0x050",
+      "access": "ro",
+      "group": "status",
+      "fields": [
+        {
+          "name": "state",
+          "lsb": 0,
+          "width": 3,
+          "enum": "state"
+        },
+        {
+          "name": "stop_reason",
+          "lsb": 3,
+          "width": 4,
+          "enum": "stop_reason"
+        },
+        {
+          "name": "storage_error",
+          "lsb": 7,
+          "width": 2,
+          "enum": "storage_error"
+        },
+        {
+          "name": "drain_timeout",
+          "lsb": 9,
+          "width": 1
+        },
+        {
+          "name": "trigger_latched",
+          "lsb": 10,
+          "width": 1
+        },
+        {
+          "name": "trigger_software",
+          "lsb": 11,
+          "width": 1
+        },
+        {
+          "name": "configured",
+          "lsb": 12,
+          "width": 1
+        },
+        {
+          "name": "journal_overflow",
+          "lsb": 16,
+          "width": 4
+        },
+        {
+          "name": "counter_saturated",
+          "lsb": 20,
+          "width": 4
+        }
+      ]
+    },
+    {
+      "name": "OUTCOME",
+      "offset": "0x054",
+      "access": "ro",
+      "group": "status",
+      "fields": [
+        {
+          "name": "trace_reset",
+          "lsb": 0,
+          "width": 3,
+          "enum": "outcome"
+        },
+        {
+          "name": "clear",
+          "lsb": 3,
+          "width": 3,
+          "enum": "outcome"
+        },
+        {
+          "name": "configure",
+          "lsb": 6,
+          "width": 3,
+          "enum": "outcome"
+        },
+        {
+          "name": "arm",
+          "lsb": 9,
+          "width": 3,
+          "enum": "outcome"
+        },
+        {
+          "name": "stop",
+          "lsb": 12,
+          "width": 3,
+          "enum": "outcome"
+        },
+        {
+          "name": "reset_source",
+          "lsb": 15,
+          "width": 3,
+          "enum": "outcome"
+        },
+        {
+          "name": "software_trigger",
+          "lsb": 18,
+          "width": 3,
+          "enum": "outcome"
+        }
+      ]
+    },
+    {
+      "name": "SESSION_ID_LO",
+      "offset": "0x058",
+      "access": "ro",
+      "group": "status",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "SESSION_ID_HI",
+      "offset": "0x05C",
+      "access": "ro",
+      "group": "status",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "CONFIG_TAG_LO",
+      "offset": "0x060",
+      "access": "ro",
+      "group": "status",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "CONFIG_TAG_HI",
+      "offset": "0x064",
+      "access": "ro",
+      "group": "status",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "DRAIN_CYCLES",
+      "offset": "0x068",
+      "access": "ro",
+      "group": "status",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG0_CTRL",
+      "offset": "0x080",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "enable",
+          "lsb": 0,
+          "width": 1
+        },
+        {
+          "name": "mode",
+          "lsb": 1,
+          "width": 1,
+          "enum": "trigger_mode"
+        },
+        {
+          "name": "kinds",
+          "lsb": 8,
+          "width": 7
+        }
+      ]
+    },
+    {
+      "name": "TRIG0_VALUE",
+      "offset": "0x084",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG0_MASK",
+      "offset": "0x088",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG0_BASE",
+      "offset": "0x08C",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG0_LIMIT",
+      "offset": "0x090",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG1_CTRL",
+      "offset": "0x0A0",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "enable",
+          "lsb": 0,
+          "width": 1
+        },
+        {
+          "name": "mode",
+          "lsb": 1,
+          "width": 1,
+          "enum": "trigger_mode"
+        },
+        {
+          "name": "kinds",
+          "lsb": 8,
+          "width": 7
+        }
+      ]
+    },
+    {
+      "name": "TRIG1_VALUE",
+      "offset": "0x0A4",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG1_MASK",
+      "offset": "0x0A8",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG1_BASE",
+      "offset": "0x0AC",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG1_LIMIT",
+      "offset": "0x0B0",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG2_CTRL",
+      "offset": "0x0C0",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "enable",
+          "lsb": 0,
+          "width": 1
+        },
+        {
+          "name": "mode",
+          "lsb": 1,
+          "width": 1,
+          "enum": "trigger_mode"
+        },
+        {
+          "name": "kinds",
+          "lsb": 8,
+          "width": 7
+        }
+      ]
+    },
+    {
+      "name": "TRIG2_VALUE",
+      "offset": "0x0C4",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG2_MASK",
+      "offset": "0x0C8",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG2_BASE",
+      "offset": "0x0CC",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG2_LIMIT",
+      "offset": "0x0D0",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG3_CTRL",
+      "offset": "0x0E0",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "enable",
+          "lsb": 0,
+          "width": 1
+        },
+        {
+          "name": "mode",
+          "lsb": 1,
+          "width": 1,
+          "enum": "trigger_mode"
+        },
+        {
+          "name": "kinds",
+          "lsb": 8,
+          "width": 7
+        }
+      ]
+    },
+    {
+      "name": "TRIG3_VALUE",
+      "offset": "0x0E4",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG3_MASK",
+      "offset": "0x0E8",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG3_BASE",
+      "offset": "0x0EC",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG3_LIMIT",
+      "offset": "0x0F0",
+      "access": "rw",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG_TICK_LO",
+      "offset": "0x100",
+      "access": "ro",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG_TICK_HI",
+      "offset": "0x104",
+      "access": "ro",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "TRIG_MATCH",
+      "offset": "0x108",
+      "access": "ro",
+      "group": "triggers",
+      "fields": [
+        {
+          "name": "lanes",
+          "lsb": 0,
+          "width": 6
+        },
+        {
+          "name": "primary",
+          "lsb": 8,
+          "width": 3,
+          "reset": 7
+        },
+        {
+          "name": "software",
+          "lsb": 11,
+          "width": 1
+        },
+        {
+          "name": "slots",
+          "lsb": 12,
+          "width": 4
+        }
+      ]
+    },
+    {
+      "name": "ACCT_SELECT",
+      "offset": "0x120",
+      "access": "rw",
+      "group": "accounting",
+      "fields": [
+        {
+          "name": "source",
+          "lsb": 0,
+          "width": 2
+        },
+        {
+          "name": "counter",
+          "lsb": 4,
+          "width": 3,
+          "enum": "counter"
+        }
+      ]
+    },
+    {
+      "name": "ACCT_VALUE_LO",
+      "offset": "0x124",
+      "access": "ro",
+      "group": "accounting",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "ACCT_VALUE_HI",
+      "offset": "0x128",
+      "access": "ro",
+      "group": "accounting",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "READ_SESSION_LO",
+      "offset": "0x140",
+      "access": "rw",
+      "group": "readout",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "READ_SESSION_HI",
+      "offset": "0x144",
+      "access": "rw",
+      "group": "readout",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "READ_OFFSET",
+      "offset": "0x148",
+      "access": "rw",
+      "group": "readout",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "READ_LENGTH",
+      "offset": "0x14C",
+      "access": "ro",
+      "group": "readout",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "READ_DATA",
+      "offset": "0x150",
+      "access": "ro",
+      "group": "readout",
+      "fields": [
+        {
+          "name": "value",
+          "lsb": 0,
+          "width": 32
+        }
+      ]
+    },
+    {
+      "name": "READ_STATUS",
+      "offset": "0x154",
+      "access": "ro",
+      "group": "readout",
+      "fields": [
+        {
+          "name": "valid",
+          "lsb": 0,
+          "width": 1
+        },
+        {
+          "name": "stale",
+          "lsb": 1,
+          "width": 1
+        }
+      ]
+    }
+  ]
+}

@@ -1,10 +1,10 @@
 PYTHON ?= python3
 
-.PHONY: help doctor config-check smoke synth-smoke foundation-check model-check raw-check snapshot-check compact-check control-check retention-check check
+.PHONY: help doctor config-check smoke synth-smoke foundation-check model-check raw-check snapshot-check compact-check control-check retention-check registers-check check
 
 help:
 	@printf '%s\n' 'doctor            Inventory required and optional local tools' 'config-check      Validate the provisional configuration and negative cases' 'smoke             Build/run the HDL probe and compile/check a freestanding RV32 ELF' 'synth-smoke       Synthesize the HDL probe with an available Yosys' 'foundation-check  Run all required P0 checks offline' 'model-check       Check P1a semantics, admission, and abstract reserve budgets' 'raw-check         Check P1b wire format and generate a raw model fragment' 'check             Run foundation and all implemented model checks'
-	@printf '%s\n' 'snapshot-check    Check P1c retention and authoritative model snapshots' 'compact-check     Check P1d exact-time codecs and framed size comparisons' 'control-check     Check P1e controller command races and streaming run flush' 'retention-check   Check P1f compressed retention and measured capacity'
+	@printf '%s\n' 'snapshot-check    Check P1c retention and authoritative model snapshots' 'compact-check     Check P1d exact-time codecs and framed size comparisons' 'control-check     Check P1e controller command races and streaming run flush' 'retention-check   Check P1f compressed retention and measured capacity' 'registers-check   Check P1g register map, trigger slots, and register-driven readout'
 
 doctor:
 	$(PYTHON) scripts/doctor.py
@@ -40,4 +40,7 @@ control-check:
 retention-check:
 	$(PYTHON) -m scripts.retention_check
 
-check: foundation-check model-check raw-check snapshot-check compact-check control-check retention-check
+registers-check:
+	$(PYTHON) -m scripts.registers_check
+
+check: foundation-check model-check raw-check snapshot-check compact-check control-check retention-check registers-check
