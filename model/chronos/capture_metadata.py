@@ -42,10 +42,12 @@ def _match(source, lane, reason):
     return {"source": source, "lane": lane, "reason": reason}
 
 
-def _make_trigger(tick, matches):
+def _make_trigger(tick, matches, software):
     _integer(tick, "trigger tick")
-    if type(matches) not in (list, tuple) or not 1 <= len(matches) <= 6:
-        raise ValueError("trigger matches must contain one to six entries")
+    if type(software) is not bool:
+        raise ValueError("software trigger flag must be bool")
+    if type(matches) not in (list, tuple) or not (0 if software else 1) <= len(matches) <= 6:
+        raise ValueError("trigger matches must contain up to six entries and one unless software")
     result = []
     for entry in matches:
         if type(entry) not in (list, tuple) or len(entry) != 3:
@@ -54,22 +56,27 @@ def _make_trigger(tick, matches):
     pairs = [(entry["source"], entry["lane"]) for entry in result]
     if pairs != sorted(set(pairs)):
         raise ValueError("trigger source/lane pairs must be unique and sorted")
-    return {"tick": tick, "matches": result, "primary": dict(result[0])}
+    return {"tick": tick, "matches": result, "primary": dict(result[0]) if result else None,
+            "software": software}
 
 
 def _validate_trigger(value):
     if value is None:
         return
-    _keys(value, ("tick", "matches", "primary"), "trigger")
+    _keys(value, ("tick", "matches", "primary", "software"), "trigger")
     matches = value["matches"]
-    if type(matches) is not list or not 1 <= len(matches) <= 6:
+    if type(matches) is not list:
         raise ValueError("invalid serialized trigger matches")
     entries = []
     for match in matches:
         _keys(match, ("source", "lane", "reason"), "trigger match")
         entries.append((match["source"], match["lane"], match["reason"]))
-    expected = _make_trigger(value["tick"], entries)
+    expected = _make_trigger(value["tick"], entries, value["software"])
     primary = value["primary"]
+    if expected["primary"] is None:
+        if primary is not None:
+            raise ValueError("software-only trigger has no primary match")
+        return
     _keys(primary, ("source", "lane", "reason"), "primary trigger match")
     _match(primary["source"], primary["lane"], primary["reason"])
     if primary != expected["primary"]:
@@ -133,8 +140,8 @@ class CaptureMetadata:
         ranges.append({"epoch": epoch, "first_sequence": sequence, "last_sequence": sequence,
                        "first_tick": tick, "last_tick": tick, "reason": reason, "count": 1})
 
-    def latch_trigger(self, tick, matches):
-        trigger = _make_trigger(tick, matches)
+    def latch_trigger(self, tick, matches, *, software=False):
+        trigger = _make_trigger(tick, matches, software)
         if self._trigger is None:
             self._trigger = trigger
 

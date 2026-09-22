@@ -74,7 +74,7 @@ class CaptureSessionTests(unittest.TestCase):
         valid = json.dumps(self.metadata).encode()
         bad = [b'null', b'[]', b'\xff', b'{', b'[' * 1500 + b']' * 1500,
                valid[:-1] + b',"scope":"capture-snapshot"}',
-               valid.replace(b'"schema_version": 1', b'"schema_version": NaN')]
+               valid.replace(b'"schema_version": 2', b'"schema_version": NaN')]
         for raw in bad:
             with self.subTest(prefix=raw[:40]), self.assertRaises(DecodeError):
                 decode_capture(frame(raw, self.fragment))
@@ -85,7 +85,7 @@ class CaptureSessionTests(unittest.TestCase):
             del metadata[key]
             with self.subTest(missing=key), self.assertRaises(DecodeError):
                 decode_capture(self.altered(metadata))
-        for changes in (dict(extra=0), dict(schema_version=True), dict(scope='event-fragment'),
+        for changes in (dict(extra=0), dict(schema_version=True), dict(schema_version=1), dict(scope='event-fragment'),
                         dict(provenance='board'), dict(session_id=2), dict(config_tag=-1)):
             with self.subTest(changes=changes), self.assertRaises(DecodeError):
                 decode_capture(self.altered(dict(self.metadata, **changes)))

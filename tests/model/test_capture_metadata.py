@@ -168,7 +168,7 @@ class MetadataWriterTests(unittest.TestCase):
         metadata.latch_trigger((1 << 64) - 1, matches)
         expected = {"tick": (1 << 64) - 1,
                     "matches": [{"source": source, "lane": lane, "reason": reason} for source, lane, reason in matches],
-                    "primary": {"source": 0, "lane": 0, "reason": "pc"}}
+                    "primary": {"source": 0, "lane": 0, "reason": "pc"}, "software": False}
         matches[0][2] = "changed"
         metadata.latch_trigger(0, ((3, 0, "later"),))
         self.assertEqual(metadata.snapshot()["trigger"], expected)
@@ -190,9 +190,24 @@ class MetadataWriterTests(unittest.TestCase):
         for tick in (-1, 1 << 64, True, 0.0):
             with self.subTest(tick=tick), self.assertRaises(ValueError):
                 metadata.latch_trigger(tick, ((0, 0, "x"),))
+        for software in (None, 1, "yes"):
+            with self.subTest(software=software), self.assertRaises(ValueError):
+                metadata.latch_trigger(1, (), software=software)
+        self.assertEqual(metadata.snapshot(), before)
         exact = CaptureMetadata()
         exact.latch_trigger(0, ((0, 0, "é" * 32),))
         validate_metadata(exact.snapshot())
+
+    def test_software_trigger_may_have_no_hardware_match(self):
+        metadata = CaptureMetadata()
+        metadata.latch_trigger(5, (), software=True)
+        self.assertEqual(metadata.snapshot()["trigger"],
+                         {"tick": 5, "matches": [], "primary": None, "software": True})
+        validate_metadata(metadata.snapshot())
+        merged = CaptureMetadata()
+        merged.latch_trigger(5, ((1, 1, "bus"),), software=True)
+        self.assertEqual(merged.snapshot()["trigger"]["primary"], {"source": 1, "lane": 1, "reason": "bus"})
+        validate_metadata(merged.snapshot())
 
     def test_snapshot_is_defensive_at_every_nested_boundary(self):
         metadata = CaptureMetadata(counter_bits=1)
@@ -369,7 +384,7 @@ class MetadataValidationTests(unittest.TestCase):
 
     def test_serialized_trigger_is_strict_and_primary_is_not_bool_equivalent(self):
         self.value["trigger"] = {"tick": 3, "matches": [{"source": 1, "lane": 0, "reason": "bus"}],
-                                 "primary": {"source": 1, "lane": 0, "reason": "bus"}}
+                                 "primary": {"source": 1, "lane": 0, "reason": "bus"}, "software": False}
         validate_metadata(self.value)
         for path, replacement in (
             (("trigger", "tick"), True), (("trigger", "matches"), ()),
@@ -378,6 +393,11 @@ class MetadataValidationTests(unittest.TestCase):
             (("trigger", "primary", "source"), True), (("trigger", "primary", "reason"), "other"),
             (("trigger", "primary"), None), (("trigger", "matches", 0), {"source": 1, "lane": 0}),
             (("trigger",), {"tick": 3, "matches": [], "primary": {}, "extra": 0}),
+            (("trigger", "software"), 1), (("trigger", "software"), None),
+            (("trigger",), {"tick": 3, "matches": [], "primary": None}),
+            (("trigger",), {"tick": 3, "matches": [], "primary": None, "software": False}),
+            (("trigger",), {"tick": 3, "matches": [{"source": 1, "lane": 0, "reason": "bus"}],
+                            "primary": None, "software": True}),
         ):
             with self.subTest(path=path, replacement=replacement):
                 self.invalid(path, replacement)

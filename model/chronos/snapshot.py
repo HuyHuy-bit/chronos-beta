@@ -79,8 +79,9 @@ class SnapshotCapture:
                 self.metadata.mark(source, epoch=event.epoch, sequence=event.sequence,
                                    tick=event.tick, reason='reset_discarded')
 
-    def step(self, tick, observations=(), service=False, stop=False, trace_reset=False, reset_source=None):
-        if any(type(flag) is not bool for flag in (service, stop, trace_reset)):
+    def step(self, tick, observations=(), service=False, stop=False, trace_reset=False, reset_source=None,
+             software_trigger=False):
+        if any(type(flag) is not bool for flag in (service, stop, trace_reset, software_trigger)):
             raise ValueError('control flags must be bool')
         if trace_reset:
             if self.session_id == (1 << 64) - 1:
@@ -102,7 +103,8 @@ class SnapshotCapture:
         before = self._totals()
         epochs, sequences = self.model.epochs[:], self.model.sequences[:]
         self._decisions = {}
-        self.model.step(tick, tuple(event for bundle in bundles for event in bundle), service=False)
+        self.model.step(tick, tuple(event for bundle in bundles for event in bundle), service=False,
+                        software_trigger=software_trigger)
         self._sync(before)
         for source, bundle in enumerate(bundles):
             if self.model.sequences[source] == sequences[source]:
@@ -117,7 +119,8 @@ class SnapshotCapture:
                                        tick=tick, reason='filtered' if filtered else reason)
         if self.model.trigger is not None:
             self.ring.pin()
-            self.metadata.latch_trigger(self.model.trigger['tick'], self.model.trigger['matches'])
+            self.metadata.latch_trigger(self.model.trigger['tick'], self.model.trigger['matches'],
+                                        software=self.model.trigger['software'])
         if self.model.stop_reason is not None and not self.ring.summary()['pinned']:
             self.ring.pin()
         if service:
@@ -160,7 +163,7 @@ class SnapshotCapture:
                         config_sha256=hashlib.sha256(json.dumps(self.config, sort_keys=True,
                                               separators=(',', ':')).encode()).hexdigest())
         fragment = encode_fragment(pages, manifest)
-        metadata = dict(schema_version=1, scope='capture-snapshot', provenance='model',
+        metadata = dict(schema_version=2, scope='capture-snapshot', provenance='model',
                         session_id=self.session_id, config_tag=self.config_tag,
                         capture=self.metadata.snapshot(), retention=self.ring.summary(),
                         terminal=dict(reason=self.model.stop_reason, drain_complete=self.model.complete and self.storage_error is None,

@@ -61,11 +61,11 @@ class CaptureModel:
         if self.stop_reason is None:
             self.stop_reason = reason
 
-    def step(self, tick, observations=(), service=False):
+    def step(self, tick, observations=(), service=False, software_trigger=False):
         if type(tick) is not int or not 0 <= tick <= self.limit or tick <= self._last_tick:
             raise ValueError('tick must increase within the active counter range')
-        if type(service) is not bool:
-            raise ValueError('service must be bool')
+        if type(service) is not bool or type(software_trigger) is not bool:
+            raise ValueError('service and software_trigger must be bool')
         bundles = normalize(observations)
         decisions = []
         for source, bundle in enumerate(bundles):
@@ -93,14 +93,15 @@ class CaptureModel:
             return
         matches = tuple((source, lane, reason)
                         for source, lane, _, _, reason in decisions if reason is not None)
-        if self.trigger is None and matches:
+        if self.trigger is None and (matches or software_trigger):
             if tick + self.post_ticks > self.limit:
                 self.rejected_cycle_events += len(decisions)
                 self.stop('time_window_overflow')
                 if service:
                     self.service()
                 return
-            self.trigger = {'tick': tick, 'matches': matches, 'primary': matches[0]}
+            self.trigger = {'tick': tick, 'matches': matches, 'primary': matches[0] if matches else None,
+                            'software': software_trigger}
         eligible = [[] for _ in range(4)]
         for source, lane, observation, retain, _ in decisions:
             sequence = self.sequences[source]
@@ -160,6 +161,13 @@ class CaptureModel:
         self._round_robin = (source + 1) % 4
         self._active = None
         return event
+
+    def watermark(self, source):
+        if type(source) is not int or not 0 <= source < 4:
+            raise ValueError('source must be in 0..3')
+        if self.queues[source]:
+            return self.queues[source][0].tick - 1
+        return 1 << 64 if self.stop_reason is not None else self._last_tick
 
     def source_reset(self, source):
         if type(source) is not int or not 0 <= source < 4:

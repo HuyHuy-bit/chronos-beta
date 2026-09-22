@@ -19,7 +19,7 @@ def _shape(value, keys, name):
 
 def _validate(metadata, fragment):
     _shape(metadata, 'schema_version scope provenance session_id config_tag capture retention terminal', 'capture')
-    if type(metadata['schema_version']) is not int or metadata['schema_version'] != 1:
+    if type(metadata['schema_version']) is not int or metadata['schema_version'] != 2:
         raise DecodeError('unsupported capture schema')
     if metadata['scope'] != 'capture-snapshot' or metadata['provenance'] != 'model':
         raise DecodeError('unsupported capture scope or provenance')

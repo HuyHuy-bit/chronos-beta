@@ -150,7 +150,7 @@ class SnapshotTests(unittest.TestCase):
                          first_tick=16, last_tick=16, reason="filtered", count=1)])
         descriptor = decoded["metadata"]["capture"]["trigger"]
         match = dict(source=3, lane=0, reason="filtered-fault")
-        self.assertEqual(descriptor, dict(tick=16, matches=[match], primary=match))
+        self.assertEqual(descriptor, dict(tick=16, matches=[match], primary=match, software=False))
         self.assertEqual([event.sequence for event in decoded["events"]], list(range(16)))
         self.assert_dispositions(decoded)
 
