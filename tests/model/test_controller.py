@@ -211,7 +211,7 @@ class ControllerTests(unittest.TestCase):
             self.cycle(controller, service=True)
             cycles += 1
         self.assertFalse(controller.status()["drain_timeout"])
-        self.assertEqual(cycles, 2 * 16 * 16)
+        self.assertEqual(cycles, 2 * 16 * 7)
         self.assertTrue(decode_capture(controller.read()[1])["metadata"]["terminal"]["drain_complete"])
 
     def test_storage_error_freezes_incomplete_in_the_same_cycle(self):
@@ -264,7 +264,8 @@ class ControllerTests(unittest.TestCase):
         invalid = (dict(config=dict(self.config), post_ticks=-1), dict(config=dict(self.config)),
                    self.settings(extra=1), self.settings(drain_limit=0), self.settings(drain_limit=1 << 32),
                    self.settings(keep=1), self.settings(config=dict(self.config, pre_pages=8)),
-                   self.settings(config=[]), self.settings(config=dict(self.config, post_pages=8, pre_pages=24)))
+                   self.settings(config=[]), self.settings(config=dict(self.config, post_pages=2, pre_pages=30)),
+                   self.settings(codec='zip'))
         for settings in invalid:
             with self.subTest(settings=settings):
                 result = self.cycle(controller, configure=settings)

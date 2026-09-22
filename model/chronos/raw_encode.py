@@ -13,6 +13,7 @@ _TYPES = {
     "BUS_RESP": 6,
     "USER_EVENT": 7,
 }
+MAX_RECORD_BYTES = 52
 
 
 def _unsigned(value, bits, name):

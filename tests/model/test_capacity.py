@@ -19,6 +19,7 @@ class CapacityTests(unittest.TestCase):
         budget = completion_budget(self.config, inventory)
         self.assertEqual(budget, {
             "payload_bytes": 15360,
+            "record_bytes": 128,
             "event_bytes": 8192,
             "overhead_bytes": 3952,
             "required_bytes": 12144,

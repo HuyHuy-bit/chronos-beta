@@ -6,7 +6,7 @@ from .events import Event, normalize
 
 
 class CaptureModel:
-    def __init__(self, config, post_ticks=0, counter_bits=64, keep=None, match=None):
+    def __init__(self, config, post_ticks=0, counter_bits=64, keep=None, match=None, inventory=None):
         validate(config)
         if config['source_count'] != 4:
             raise ValueError('the synthetic profile requires four sources')
@@ -20,7 +20,7 @@ class CaptureModel:
         if match is not None and not callable(match):
             raise ValueError('match must be callable')
         self.config = dict(config)
-        self.budget = completion_budget(config, default_inventory(config))
+        self.budget = completion_budget(config, default_inventory(config) if inventory is None else inventory)
         if not self.budget['safe']:
             raise ValueError('insufficient post reserve for the declared completion inventory')
         self.post_ticks = post_ticks
@@ -49,7 +49,7 @@ class CaptureModel:
     @property
     def reserved_bytes(self):
         entries = sum(map(len, self.queues)) + self._post_completed
-        return self.budget['overhead_bytes'] + entries * self.config['max_record_bytes']
+        return self.budget['overhead_bytes'] + entries * self.budget['record_bytes']
 
     @property
     def complete(self):
@@ -118,7 +118,7 @@ class CaptureModel:
             if not events:
                 continue
             counts = self.stats[source, self.epochs[source]]
-            cost = len(events) * self.config['max_record_bytes']
+            cost = len(events) * self.budget['record_bytes']
             if capacity_closed or (self.trigger is not None and
                                    self.reserved_bytes + cost > self.budget['payload_bytes']):
                 capacity_closed = True
@@ -146,7 +146,7 @@ class CaptureModel:
                 candidate = (self._round_robin + offset) % 4
                 if self.queues[candidate]:
                     self._active = candidate
-                    self._remaining = self.config['max_record_bytes']
+                    self._remaining = self.budget['record_bytes']
                     break
         if self._active is None:
             return None

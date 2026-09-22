@@ -1,29 +1,31 @@
 from .events import normalize
+from .raw_encode import MAX_RECORD_BYTES
 from .snapshot import SnapshotCapture
 
 
 STATES = ('DISABLED', 'ARMED', 'POST_TRIGGER', 'DRAINING', 'FROZEN', 'CLEARING')
 COMMANDS = ('trace_reset', 'clear', 'configure', 'arm', 'stop', 'reset_source', 'software_trigger')
-_SETTINGS = ('config', 'post_ticks', 'keep', 'match', 'drain_limit')
+_SETTINGS = ('config', 'post_ticks', 'keep', 'match', 'drain_limit', 'codec')
 _U64_MAX = (1 << 64) - 1
 
 
 def _prepare(settings):
     if not {'config', 'post_ticks'} <= settings.keys() <= set(_SETTINGS):
-        raise ValueError('settings require config and post_ticks and allow keep, match, drain_limit')
+        raise ValueError('settings require config and post_ticks and allow keep, match, drain_limit, codec')
     config = settings['config']
     if type(config) is not dict:
         raise ValueError('config must be an object')
     config = dict(config)
+    codec = settings.get('codec', 'raw-v1')
     SnapshotCapture(config, post_ticks=settings['post_ticks'], keep=settings.get('keep'),
-                    match=settings.get('match'))
+                    match=settings.get('match'), codec=codec, measured=True)
     grant_bytes = config['sink_width_bits'] // 8
-    default = 4 * config['fifo_depth'] * -(-config['max_record_bytes'] // grant_bytes)
+    default = 4 * config['fifo_depth'] * -(-MAX_RECORD_BYTES // grant_bytes)
     drain_limit = settings.get('drain_limit', default)
     if type(drain_limit) is not int or not 1 <= drain_limit < 1 << 32:
         raise ValueError('drain_limit must be in 1..2**32-1')
     return dict(config=config, post_ticks=settings['post_ticks'], keep=settings.get('keep'),
-                match=settings.get('match'), drain_limit=drain_limit)
+                match=settings.get('match'), drain_limit=drain_limit, codec=codec)
 
 
 class CaptureController:
@@ -145,7 +147,8 @@ class CaptureController:
                 self.session_id += 1
                 self._capture = SnapshotCapture(settings['config'], post_ticks=settings['post_ticks'],
                                                 keep=settings['keep'], match=settings['match'],
-                                                session_id=self.session_id, config_tag=self.config_tag)
+                                                session_id=self.session_id, config_tag=self.config_tag,
+                                                codec=settings['codec'], measured=True)
                 self._drain_limit = settings['drain_limit']
                 self._drain_cycles = 0
                 self.drain_timeout = False

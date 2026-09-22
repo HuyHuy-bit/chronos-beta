@@ -24,8 +24,6 @@ def _validate(metadata, fragment):
     if metadata['scope'] != 'capture-snapshot' or metadata['provenance'] != 'model':
         raise DecodeError('unsupported capture scope or provenance')
     manifest = fragment['manifest']
-    if manifest['codecs'] != ['raw-v1']:
-        raise DecodeError('snapshot retention currently requires raw-v1 pages')
     for key in ('session_id', 'config_tag'):
         _integer(metadata[key], (1 << 64) - 1, key)
         if metadata[key] != manifest[key]:
@@ -64,7 +62,9 @@ def _validate(metadata, fragment):
     if not retention['eviction_saturated']:
         if retention['next_generation'] != retention['committed_pages'] + retention['evicted_pages']:
             raise DecodeError('allocated page dispositions do not balance')
-        max_records = (retention['page_bytes'] - 64) // 36
+        payload = retention['page_bytes'] - 64
+        max_records = (payload // 36 if manifest['codecs'] == ['raw-v1']
+                       else payload // 48 * 255 + payload % 48 // 16)
         if not retention['evicted_pages'] <= retention['evicted_events'] <= retention['evicted_pages'] * max_records:
             raise DecodeError('evicted record count is incompatible with evicted pages')
     terminal = metadata['terminal']
@@ -124,7 +124,7 @@ def _constant(value):
 
 
 def encode_capture(fragment, metadata):
-    decoded = decode_fragment(fragment)
+    decoded = decode_fragment(fragment, max_events=1 << 20)
     _validate(metadata, decoded)
     raw = json.dumps(metadata, ensure_ascii=True, sort_keys=True, allow_nan=False,
                      separators=(',', ':')).encode('utf-8')
@@ -137,7 +137,7 @@ def encode_capture(fragment, metadata):
 
 
 def decode_capture(data, *, max_bytes=16777216, max_metadata_bytes=65536,
-                   max_pages=4096, max_events=100000):
+                   max_pages=4096, max_events=1 << 20):
     for name, value in (('max_bytes', max_bytes), ('max_metadata_bytes', max_metadata_bytes),
                         ('max_pages', max_pages), ('max_events', max_events)):
         if type(value) is not int or value < 0:

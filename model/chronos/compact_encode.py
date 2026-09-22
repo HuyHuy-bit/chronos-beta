@@ -6,6 +6,7 @@ from .raw_encode import encode_record
 
 
 WATERMARK_END = 1 << 64
+MIN_RECORD_BYTES = 16
 
 
 def _checked(event, previous):

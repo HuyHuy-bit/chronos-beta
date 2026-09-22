@@ -88,7 +88,7 @@ class CompactSessionTests(unittest.TestCase):
         pages, manifest = fragment([events])
         self.assertEqual(decode_fragment(encode_fragment(pages, manifest))['events'], events)
 
-    def test_raw_snapshot_rejects_compact_fragment(self):
+    def test_snapshot_accepts_compact_fragment_with_matching_accounting(self):
         capture = SnapshotCapture(read_json(ROOT / 'configs/baseline.json'))
         capture.step(0, [Observation('USER_EVENT', dict(value=99))])
         for _ in range(16):
@@ -104,6 +104,5 @@ class CompactSessionTests(unittest.TestCase):
             entry['payload_crc32'] = int.from_bytes(wire[48:52], 'little')
             pages.append(wire)
         compact = encode_fragment(pages, manifest)
-        with self.assertRaisesRegex(DecodeError, 'requires raw-v1'):
-            encode_capture(compact, decoded['metadata'])
+        self.assertEqual(decode_capture(encode_capture(compact, decoded['metadata']))['events'], decoded['events'])
 

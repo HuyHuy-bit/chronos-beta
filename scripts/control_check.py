@@ -51,7 +51,7 @@ def examples(config, folder):
     cycle(clear=True)
     while controller.state == 'CLEARING':
         cycle()
-    cycle(configure=dict(config=config, post_ticks=0, drain_limit=24), arm=True)
+    cycle(configure=dict(config=config, post_ticks=0, drain_limit=10), arm=True)
     cycle(request(1), Observation('USER_EVENT', dict(value=1)))
     cycle(stop=True)
     while controller.state == 'DRAINING':

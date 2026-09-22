@@ -1,8 +1,12 @@
 from types import MappingProxyType
 
 from scripts.config import validate
+from .compact_encode import RunStream, encode_page as encode_compact_page
 from .events import Event, Observation
 from .raw_encode import encode_page, encode_record
+
+
+CODECS = ("raw-v1", "compact-v1")
 
 
 class StorageError(ValueError):
@@ -10,7 +14,7 @@ class StorageError(ValueError):
 
 
 class PageRing:
-    def __init__(self, config, *, session_id=1, config_tag=1, generation_bits=64):
+    def __init__(self, config, *, session_id=1, config_tag=1, generation_bits=64, codec="raw-v1"):
         validate(config)
         if config["source_count"] != 4:
             raise ValueError("the page ring requires four sources")
@@ -19,6 +23,12 @@ class PageRing:
         for value in (session_id, config_tag):
             if type(value) is not int or not 0 <= value < 1 << 64:
                 raise ValueError("session_id and config_tag must be u64 integers")
+        if codec not in CODECS:
+            raise ValueError("codec must be raw-v1 or compact-v1")
+        self._codec = codec
+        self._stream = RunStream()
+        self._reserve = 0
+        self.sealed_overhead_bytes = 0
         self._config = MappingProxyType(dict(config))
         self._session_id = session_id
         self._config_tag = config_tag
@@ -81,23 +91,45 @@ class PageRing:
                 if event.tick == prior.tick and event.lane <= prior.lane:
                     raise ValueError("source lane must increase within an epoch and tick")
         capacity = self._config["page_bytes"] - self._config["page_header_bytes"]
-        if self._builder_bytes + len(record) > capacity:
+        if self._builder_bytes + self._reserve + len(record) > capacity:
             self.seal()
         if self._active_slot is None:
             self._allocate()
         self._builder.append(event)
-        self._builder_bytes += len(record)
         self._last[event.source] = event
+        if self._codec == "compact-v1":
+            self._take(self._stream.push(event), len(record))
+            return
+        self._builder_bytes += len(record)
         if self._builder_bytes == capacity:
             self.seal()
 
+    def _take(self, records, raw_bytes=0):
+        self._builder_bytes += sum(map(len, records))
+        if self._stream.pending == 0:
+            self._reserve = 0
+        elif self._stream.pending == 1 and raw_bytes:
+            self._reserve = raw_bytes
+
+    def advance(self, watermark):
+        self._writable()
+        if self._codec == "compact-v1":
+            self._take(self._stream.advance(watermark))
+
     def seal(self):
         self._writable()
+        if self._codec == "compact-v1":
+            self._take(self._stream.flush())
         if not self._builder:
             return
-        page = encode_page(self._builder, session_id=self._session_id,
-                           generation=self._active_generation, config_tag=self._config_tag,
-                           page_bytes=self._config["page_bytes"])
+        identity = dict(session_id=self._session_id, generation=self._active_generation,
+                        config_tag=self._config_tag, page_bytes=self._config["page_bytes"])
+        if self._codec == "compact-v1":
+            page = encode_compact_page(self._builder, max_events=100000, **identity)
+        else:
+            page = encode_page(self._builder, **identity)
+        assert int.from_bytes(page[32:36], "little") == self._builder_bytes
+        self.sealed_overhead_bytes += len(page) - self._builder_bytes
         self._committed[self._active_slot] = (self._active_generation, page, len(self._builder))
         self._active_slot = None
         self._active_generation = None

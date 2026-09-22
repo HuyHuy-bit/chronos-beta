@@ -2,9 +2,11 @@ import hashlib
 import json
 
 from .admission import CaptureModel
+from .capacity import measured_inventory
 from .capture_metadata import COUNTERS, CaptureMetadata
 from .capture_session import encode_capture
 from .events import normalize
+from .compact_decode import decode_page as decode_compact_page
 from .raw_decode import decode_page
 from .raw_session import encode_fragment
 from .retention import PageRing, StorageError
@@ -13,7 +15,7 @@ from .retention import PageRing, StorageError
 class SnapshotCapture:
     def __init__(self, config, *, post_ticks=0, counter_bits=64, metadata_bits=64,
                  journal_capacity=4, generation_bits=64, session_id=1, config_tag=1,
-                 keep=None, match=None):
+                 keep=None, match=None, codec='raw-v1', measured=False):
         self.config = dict(config)
         self.session_id = session_id
         self.config_tag = config_tag
@@ -22,6 +24,10 @@ class SnapshotCapture:
         self._metadata_bits = metadata_bits
         self._journal_capacity = journal_capacity
         self._generation_bits = generation_bits
+        if type(measured) is not bool:
+            raise ValueError('measured must be bool')
+        self._codec = codec
+        self._measured = measured
         if keep is not None and not callable(keep) or match is not None and not callable(match):
             raise ValueError('keep and match must be callable')
         self._user_keep = keep
@@ -30,14 +36,19 @@ class SnapshotCapture:
 
     def _initialize(self):
         self._decisions = {}
-        self.model = CaptureModel(self.config, post_ticks=self._post_ticks, counter_bits=self._counter_bits,
-                                  keep=self._keep, match=self._match)
         self.ring = PageRing(self.config, session_id=self.session_id, config_tag=self.config_tag,
-                             generation_bits=self._generation_bits)
+                             generation_bits=self._generation_bits, codec=self._codec)
+        inventory = measured_inventory(self.config, self._codec) if self._measured else None
+        self.model = CaptureModel(self.config, post_ticks=self._post_ticks, counter_bits=self._counter_bits,
+                                  keep=self._keep, match=self._match, inventory=inventory)
+
         self.metadata = CaptureMetadata(counter_bits=self._metadata_bits, journal_capacity=self._journal_capacity)
         self.storage_error = None
         self.frozen = False
         self._export = None
+
+    def _advance(self):
+        self.ring.advance(self.model.watermark(0))
 
     def _keep(self, observation):
         result = True if self._user_keep is None else self._user_keep(observation)
@@ -96,6 +107,8 @@ class SnapshotCapture:
             self.ring.pin()
             if service:
                 self.service()
+            else:
+                self._advance()
             return
         if reset_source is not None:
             self._reset_source(reset_source)
@@ -125,6 +138,8 @@ class SnapshotCapture:
             self.ring.pin()
         if service:
             self.service()
+        else:
+            self._advance()
 
     def service(self):
         if self.frozen or self.storage_error is not None:
@@ -140,6 +155,8 @@ class SnapshotCapture:
                 self.metadata.add(event.source, storage_discarded=1)
                 self.metadata.mark(event.source, epoch=event.epoch, sequence=event.sequence,
                                    tick=event.tick, reason='storage_discarded')
+        if self.storage_error is None:
+            self._advance()
         return event
 
     def freeze(self, *, incomplete=False):
@@ -153,13 +170,14 @@ class SnapshotCapture:
             raise ValueError('capture has undrained or failed work')
         pages = self.ring.freeze()
         directory = []
+        decoder = decode_compact_page if self._codec == 'compact-v1' else decode_page
         for raw in pages:
-            page = decode_page(raw, page_bytes=self.config['page_bytes'])
+            page = decoder(raw, page_bytes=self.config['page_bytes'], max_events=100000)
             directory.append(dict(generation=page['generation'], record_count=len(page['events']),
                                   payload_crc32=page['payload_crc32']))
         manifest = dict(schema_version=1, scope='event-fragment', provenance='model', session_id=self.session_id,
                         config_tag=self.config_tag, page_bytes=self.config['page_bytes'],
-                        source_profile='rv32-single-clock-v1', codecs=['raw-v1'], pages=directory,
+                        source_profile='rv32-single-clock-v1', codecs=[self._codec], pages=directory,
                         config_sha256=hashlib.sha256(json.dumps(self.config, sort_keys=True,
                                               separators=(',', ':')).encode()).hexdigest())
         fragment = encode_fragment(pages, manifest)

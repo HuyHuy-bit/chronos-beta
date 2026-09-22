@@ -88,7 +88,7 @@ def encode_fragment(pages, manifest):
                       separators=(',', ':')).encode('utf-8')
     if len(data) > 65536 or 32 + len(data) + len(pages) * manifest['page_bytes'] > 16777216:
         raise ValueError('fragment exceeds encoder resource limits')
-    _pages(pages, manifest, 100000)
+    _pages(pages, manifest, sum(entry['record_count'] for entry in manifest['pages']))
     version = 1 if manifest['codecs'] == ['raw-v1'] else 2
     preamble = bytearray(struct.pack('<8sBBHIIIII', b'CHRONOS\0', version, 0, 32, len(data),
                                     len(pages), manifest['page_bytes'], zlib.crc32(data), 0))
