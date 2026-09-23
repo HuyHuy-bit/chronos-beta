@@ -102,7 +102,7 @@ def main():
                       pending=['authoritative capture terminal/loss export', 'snapshot commit and retention',
                                'compression', 'encoded completion and hardware service reconciliation',
                                'CPU qualification', 'Chronos RTL', 'physical board'])
-        print(f'PASS: P1b raw format, {result.testsRun} test methods; full P1 remains open')
+        print(f'PASS: P1b raw format, {result.testsRun} test methods')
         print(f"Sample: {report['sample']['decoded_events']} exact events in {report['sample']['page_count']} pages")
         print('Receipt: build/p1b.json; fragment: build/raw/sample.chronos')
         return 0

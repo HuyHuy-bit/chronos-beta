@@ -105,7 +105,7 @@ def main():
             'streaming run watchdog and controller command races', 'compressed snapshot retention',
             'encoded completion and cycle-level SRAM service reconciliation', 'CPU qualification',
             'Chronos RTL', 'physical board'])
-        print(f'PASS: P1d compact codecs, {result.testsRun} test methods; full P1 remains open')
+        print(f'PASS: P1d compact codecs, {result.testsRun} test methods')
         print('20,000 deterministic streams / 372,178 exact events; five framed size comparisons')
         print('Receipt: build/p1d.json; fragments: build/compact/')
         return 0

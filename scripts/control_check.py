@@ -91,7 +91,7 @@ def main():
             'compressed snapshot retention with RunStream page restart', 'register bit layout',
             'encoded completion and cycle-level SRAM service reconciliation', 'CPU qualification',
             'Chronos RTL', 'physical board'])
-        print(f'PASS: P1e controller and streaming flush, {result.testsRun} test methods; full P1 remains open')
+        print(f'PASS: P1e controller and streaming flush, {result.testsRun} test methods')
         print('768 same-cycle command cases; 2,000 watermark + 2,000 flush streams')
         print('Receipt: build/p1e.json; captures: build/control/')
         return 0

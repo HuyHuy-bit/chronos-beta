@@ -99,7 +99,7 @@ class RegisterFile:
         self.config = validate(dict(config))
         self.controller = CaptureController()
         self._words = {name: _reset(name) for name, register in MAP["registers"].items() if register["access"] == "rw"}
-        self._command = 0
+        self._command = None
         self._outcomes = {}
 
     def write(self, name, word):
@@ -132,22 +132,24 @@ class RegisterFile:
         return settings
 
     def cycle(self, tick, observations=(), *, service=False):
-        command = unpack("COMMAND", self._command)
-        self._command = 0
+        word, self._command = self._command, None
+        command = unpack("COMMAND", word or 0)
         commands = {name: bool(command[name]) for name in COMMANDS if name not in ("configure", "reset_source")}
         if command["configure"]:
             commands["configure"] = self.settings()
         if command["reset_source"]:
             commands["reset_source"] = command["reset_source_id"]
         result = self.controller.cycle(tick, observations, service=service, **commands)
-        self._outcomes = result["outcomes"]
+        if word is not None:
+            self._outcomes = result["outcomes"]
         return result
 
     def _readout(self):
         if self.controller.state != "FROZEN":
             return None
-        session, wire = self.controller.read()
-        return wire if session == self._wide("READ_SESSION") else None
+        if self.controller.read()[0] != self._wide("READ_SESSION"):
+            return None
+        return b"".join(page for _, _, page in self.controller.capture.ring.directory())
 
     def _trigger_match(self, trigger):
         if trigger is None:

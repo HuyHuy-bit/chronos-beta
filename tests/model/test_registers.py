@@ -10,6 +10,7 @@ from model.chronos.capture_session import decode_capture
 from model.chronos.controller import COMMANDS, STATES
 from model.chronos.events import Observation
 from model.chronos.predicates import KINDS, keeper, matcher
+from model.chronos.raw_decode import decode_page
 from model.chronos.raw_encode import _TYPES
 from model.chronos.registers import LANES, MAP, MAP_PATH, RegisterFile, check, pack, unpack
 from model.chronos.retention import CODECS
@@ -171,7 +172,7 @@ class RegisterFileTests(unittest.TestCase):
     def test_identity_and_capabilities(self):
         registers = self.registers
         self.assertEqual(registers.read("CHRONOS_ID").to_bytes(4, "little"), b"CHRN")
-        self.assertEqual(unpack("VERSION", registers.read("VERSION")), dict(map_minor=0, map_major=1))
+        self.assertEqual(unpack("VERSION", registers.read("VERSION")), dict(map_minor=1, map_major=1))
         self.assertEqual(unpack("CAPS", registers.read("CAPS")), dict(sources=4, trigger_slots=4, fifo_depth_log2=4,
                          page_bytes_log2=10, codecs=3, max_record_bytes=128, sink_bytes=8))
         self.assertEqual(registers.read("CAPS_SRAM_BYTES"), 32768)
@@ -199,11 +200,13 @@ class RegisterFileTests(unittest.TestCase):
             self.cycle(service=True)
         status = self.state()
         self.assertEqual((status["state"], status["stop_reason"]), ("FROZEN", "post_window"))
-        wire = self.readout()
-        self.assertEqual(wire, self.registers.controller.read()[1])
+        image = self.readout()
         self.assertEqual(unpack("READ_STATUS", self.registers.read("READ_STATUS")), dict(valid=1, stale=0))
-        decoded = decode_capture(wire)
-        self.assertEqual([event.observation.fields["transaction"] for event in decoded["events"]], [1, 2, 3, 4, 5])
+        events = [event for offset in range(0, len(image), 1024)
+                  for event in decode_page(image[offset:offset + 1024])["events"]]
+        decoded = decode_capture(self.registers.controller.read()[1])
+        self.assertEqual(tuple(events), decoded["events"])
+        self.assertEqual([event.observation.fields["transaction"] for event in events], [1, 2, 3, 4, 5])
         self.assertEqual(decoded["metadata"]["capture"]["trigger"]["matches"], [dict(source=3, lane=0, reason="slot1")])
 
     def test_stale_session_and_cleared_snapshot_read_nothing(self):
@@ -213,7 +216,8 @@ class RegisterFileTests(unittest.TestCase):
         self.registers.write("READ_SESSION_LO", 99)
         self.assertEqual(unpack("READ_STATUS", self.registers.read("READ_STATUS")), dict(valid=0, stale=1))
         self.assertEqual((self.registers.read("READ_LENGTH"), self.registers.read("READ_DATA")), (0, 0))
-        self.assertTrue(decode_capture(self.readout()))
+        self.assertEqual(self.readout(), b"")
+        self.assertEqual(unpack("READ_STATUS", self.registers.read("READ_STATUS")), dict(valid=1, stale=0))
         self.cycle(command=dict(clear=1))
         self.assertEqual(self.readout(), b"")
         self.assertEqual(self.state()["state"], "CLEARING")
@@ -247,7 +251,7 @@ class RegisterFileTests(unittest.TestCase):
         self.cycle(command=dict(reset_source=1, reset_source_id=2))
         self.assertEqual(self.registers.controller.capture.model.epochs, [0, 0, 1, 0])
         self.cycle()
-        self.assertEqual(self.outcome(), {})
+        self.assertEqual(self.outcome(), dict(reset_source="accepted"))
 
     def test_access_rules_and_word_bounds(self):
         registers = self.registers

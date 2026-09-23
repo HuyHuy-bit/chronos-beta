@@ -97,7 +97,7 @@
           "name": "map_minor",
           "lsb": 0,
           "width": 8,
-          "reset": 0
+          "reset": 1
         },
         {
           "name": "map_major",

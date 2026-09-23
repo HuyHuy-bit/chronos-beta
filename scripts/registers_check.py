@@ -6,6 +6,7 @@ import sys
 import unittest
 
 from model.chronos.capture_session import decode_capture
+from model.chronos.compact_decode import decode_page
 from model.chronos.events import Observation
 from model.chronos.predicates import KINDS
 from model.chronos.registers import MAP, MAP_PATH, RegisterFile, pack, unpack
@@ -37,11 +38,14 @@ def readout(config, folder):
     registers.write('READ_SESSION_LO', registers.read('SESSION_ID_LO'))
     length = registers.read('READ_LENGTH')
     wire = b''.join(registers.read('READ_DATA').to_bytes(4, 'little') for _ in range(-(-length // 4)))[:length]
-    path = folder / 'readout.chronos'
+    path = folder / 'readout.pages'
     path.write_bytes(wire)
-    decoded = decode_capture(path.read_bytes())
+    page_bytes = config['page_bytes']
+    events = tuple(event for offset in range(0, length, page_bytes)
+                   for event in decode_page(wire[offset:offset + page_bytes], page_bytes=page_bytes)['events'])
+    decoded = decode_capture(registers.controller.read()[1])
     trigger = decoded['metadata']['capture']['trigger']
-    if wire != registers.controller.read()[1] or trigger['matches'] != [dict(source=1, lane=0, reason='slot0')]:
+    if events != decoded['events'] or trigger['matches'] != [dict(source=1, lane=0, reason='slot0')]:
         raise RuntimeError('register readout differs from the frozen capture or trigger slot')
     return dict(status=unpack('STATUS', registers.read('STATUS')), trigger=trigger,
                 trigger_match=unpack('TRIG_MATCH', registers.read('TRIG_MATCH')),

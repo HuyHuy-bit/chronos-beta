@@ -80,7 +80,7 @@ def main():
                       pending=['compression', 'encoded completion and cycle-level SRAM service reconciliation',
                                'software-trigger and complete register command races', 'CPU qualification',
                                'Chronos RTL', 'physical board'])
-        print(f'PASS: P1c snapshots, {result.testsRun} test methods; full P1 remains open')
+        print(f'PASS: P1c snapshots, {result.testsRun} test methods')
         print('Retention: 52 saved / 60 evicted events; overload: 64 saved / 73 dropped / 1 filtered')
         print('Receipt: build/p1c.json; captures: build/snapshot/')
         return 0

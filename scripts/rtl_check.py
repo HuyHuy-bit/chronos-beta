@@ -1,16 +1,20 @@
 from dataclasses import dataclass, field
+from itertools import combinations
 import json
+import math
 import random
 import struct
 import subprocess
 import sys
 
+from model.chronos.capacity import service_envelope
 from model.chronos.events import Event, Observation, normalize
 from model.chronos.predicates import KINDS
 from model.chronos.raw_decode import decode_page
 from model.chronos.raw_encode import encode_record
 from model.chronos.raw_session import decode_fragment, encode_fragment
-from scripts.config import ROOT
+from model.chronos.registers import MAP, pack, unpack
+from scripts.config import ROOT, read_json
 from scripts.doctor import tool_path
 from scripts.model_check import fingerprints
 
@@ -20,6 +24,8 @@ SOURCES = [ROOT / path for path in ('rtl/common/chronos_pkg.sv', 'rtl/common/tra
                                     'rtl/capture/chronos_capture.sv')]
 SRAM_BYTES = 32768
 SLOTS = {'RETIRE': 0, 'BUS_RESP': 2, 'BUS_REQ': 3, 'TRAP': 4, 'IRQ_ACCEPT': 4, 'IRQ_PENDING': 5, 'USER_EVENT': 6}
+COUNTERS = ('observed', 'filtered', 'admitted', 'ingress_dropped', 'fifo_dropped')
+ADDRESS = {name: register['offset'] for name, register in MAP['registers'].items()}
 
 
 @dataclass
@@ -27,15 +33,13 @@ class Scenario:
     name: str
     cycles: list = field(default_factory=list)
     keep: tuple = KINDS
-    session: int = 0x5E55
-    config_tag: int = 0xC0F1
     drain_ready: int = 100
     seed: int = 1
     zero_drop: bool = True
     storage_full: bool = False
 
-    def cycle(self, *items, arm=False, stop=False, ready=True):
-        self.cycles.append(dict(items=list(items), arm=arm, stop=stop, ready=ready))
+    def cycle(self, *items, arm=False, stop=False, clear=False, ready=True):
+        self.cycles.append(dict(items=list(items), arm=arm, stop=stop, clear=clear, ready=ready))
 
 
 def run(arguments, log):
@@ -44,13 +48,6 @@ def run(arguments, log):
     if result.returncode:
         raise RuntimeError(f'command failed ({result.returncode}); see {log.relative_to(ROOT)}')
     return log.read_text()
-
-
-def require(key):
-    path = tool_path(key)
-    if not path:
-        raise RuntimeError(f'{key} is required; configure its path, no download attempted')
-    return path
 
 
 def retire(pc, target=None):
@@ -171,17 +168,17 @@ def scenarios():
     rearm.cycle(stop=True)
     for _ in range(3000):
         rearm.cycle()
+    rearm.cycle(clear=True)
     rearm.cycle(arm=True)
     for index in range(3):
         rearm.cycle(retire(0x4000 + 4 * index), user(100 + index))
     rearm.cycle(stop=True)
     result.append(rearm)
 
-    rate = Scenario('drain-rate')
+    rate = Scenario('max-record-rate')
     rate.cycle(arm=True)
     for index in range(16):
-        rate.cycle(retire(0x1000 + 4 * index), request(index, 0x8000), boundary('TRAP', index, 0, 0), user(index),
-                   ready=False)
+        rate.cycle(retire(0x1000 + 4 * index), boundary('TRAP', index, 0, 0), ready=False)
     rate.cycle(stop=True, ready=False)
     result.append(rate)
     return result
@@ -192,15 +189,38 @@ def slot_words(observation):
     return raw[0], raw[1], struct.unpack('<5I', raw[32:].ljust(20, b'\0'))
 
 
-def write_stimulus(scenario, path):
+def cycle_line(ready, op='-', name='CHRONOS_ID', data=0):
+    return f'c {int(ready)} {op} {ADDRESS[name]:x} {data:x}'
+
+
+def script(scenario):
     keep = sum(1 << KINDS.index(kind) for kind in scenario.keep)
-    lines = [f'cfg {keep:x} {scenario.session:x} {scenario.config_tag:x} {scenario.drain_ready} {scenario.seed}']
+    lines = [f'cfg {scenario.drain_ready} {scenario.seed}', cycle_line(1, 'w', 'CFG_MODE', pack('CFG_MODE', keep_kinds=keep))]
+    arms = 0
     for cycle in scenario.cycles:
-        lines.append(f"c {int(cycle['arm'])} {int(cycle['stop'])} {int(cycle['ready'])}")
+        commands = {}
+        if cycle['arm']:
+            commands = dict(configure=int(arms == 0), arm=1)
+            arms += 1
+        elif cycle['stop'] or cycle['clear']:
+            commands = dict(stop=int(cycle['stop']), clear=int(cycle['clear']))
+        lines.append(cycle_line(cycle['ready'], 'w', 'COMMAND', pack('COMMAND', **commands)) if commands
+                     else cycle_line(cycle['ready']))
         for item in cycle['items']:
             kind, flags, words = slot_words(item)
             lines.append(f'o {SLOTS[item.kind]} {kind} {flags} ' + ' '.join(f'{word:x}' for word in words))
-    path.write_text('\n'.join(lines) + '\n')
+    lines.append(f"u 4 {ADDRESS['STATUS']:x}")
+    reads = ['CHRONOS_ID', 'VERSION', 'CAPS', 'CAPS_SRAM_BYTES', 'STATUS', 'OUTCOME', 'SESSION_ID_LO', 'CONFIG_TAG_LO']
+    lines += [cycle_line(1, 'r', name) for name in reads]
+    for source in range(4):
+        for counter in COUNTERS:
+            lines.append(cycle_line(1, 'w', 'ACCT_SELECT', pack('ACCT_SELECT', source=source, counter=counter)))
+            lines += [cycle_line(1, 'r', 'ACCT_VALUE_LO'), cycle_line(1, 'r', 'ACCT_VALUE_HI')]
+    lines += [cycle_line(1, 'w', 'READ_SESSION_LO', arms + 1), cycle_line(1, 'r', 'READ_STATUS'),
+              cycle_line(1, 'r', 'READ_LENGTH'), cycle_line(1, 'w', 'READ_SESSION_LO', arms),
+              cycle_line(1, 'r', 'READ_STATUS'), cycle_line(1, 'r', 'READ_LENGTH')]
+    lines += [cycle_line(1, 'r', 'READ_DATA')] * (SRAM_BYTES // 4)
+    return '\n'.join(lines) + '\n', arms
 
 
 def expected(scenario):
@@ -223,93 +243,141 @@ def expected(scenario):
     return table, bundles
 
 
-def parse(path):
-    dump = dict(acct={}, directory={}, pages={})
-    for line in path.read_text().splitlines():
-        tag, *rest = line.split()
-        if tag == 'result':
-            keys = ('state', 'storage_full', 'cycles', 'stop_cycle', 'frozen_cycle', 'committed', 'ready_cycles')
-            dump.update(zip(keys, map(int, rest)))
-        elif tag == 'acct':
-            dump['acct'][int(rest[0])] = dict(zip(('observed', 'filtered', 'admitted', 'dropped', 'pending'),
-                                                  map(int, rest[1:])))
-        elif tag == 'dir':
-            dump['directory'][int(rest[0])] = (int(rest[1]), int(rest[2]))
-        elif tag == 'page':
-            dump['pages'][int(rest[0])] = bytes.fromhex(rest[1])
-    return dump
-
-
-def score(scenario, dump, page_bytes):
+def score(scenario, dump, page_bytes, arms):
     name = scenario.name
-    if dump['state'] != 4 or bool(dump['storage_full']) != scenario.storage_full:
-        raise RuntimeError(f'{name}: final state {dump["state"]}, storage_full {dump["storage_full"]}')
-    valid = [slot for slot, (flag, _) in sorted(dump['directory'].items()) if flag]
-    if valid != list(range(len(valid))) or len(valid) != dump['committed'] or sorted(dump['pages']) != valid:
-        raise RuntimeError(f'{name}: directory is not a committed linear prefix')
-    pages, events = [], []
-    for slot in valid:
-        page = decode_page(dump['pages'][slot], page_bytes=page_bytes)
-        if (page['generation'], dump['directory'][slot][1]) != (slot, slot) or \
-                (page['session_id'], page['config_tag']) != (scenario.session, scenario.config_tag):
-            raise RuntimeError(f'{name}: page {slot} identity or generation mismatch')
-        pages.append(page)
-        events.extend(page['events'])
-    manifest = dict(schema_version=1, scope='event-fragment', provenance='model', session_id=scenario.session,
-                    config_tag=scenario.config_tag, page_bytes=page_bytes, source_profile='rv32-single-clock-v1',
-                    codecs=['raw-v1'], config_sha256='0' * 64,
-                    pages=[dict(generation=page['generation'], record_count=len(page['events']),
-                                payload_crc32=page['payload_crc32']) for page in pages])
-    if decode_fragment(encode_fragment([dump['pages'][slot] for slot in valid], manifest))['events'] != tuple(events):
+    lines = [line.split() for line in dump.splitlines()]
+    drain = int(lines[0][1])
+    reads = iter(int(value) for tag, *rest in lines[1:] for value in rest[1:] if tag == 'r')
+    take = lambda register: unpack(register, next(reads))
+    identity = [next(reads), take('VERSION'), take('CAPS'), next(reads)]
+    status, outcome, session, config_tag = take('STATUS'), take('OUTCOME'), next(reads), next(reads)
+    caps = dict(sources=4, trigger_slots=0, fifo_depth_log2=4, page_bytes_log2=page_bytes.bit_length() - 1, codecs=1,
+                max_record_bytes=128, sink_bytes=8)
+    if identity != [0x4E524843, dict(map_minor=1, map_major=1), caps, SRAM_BYTES]:
+        raise RuntimeError(f'{name}: identity registers {identity}')
+    stop = 'storage_failure' if scenario.storage_full else 'manual'
+    storage = 'post_capacity' if scenario.storage_full else 'none'
+    if (status['state'], status['stop_reason'], status['storage_error'], status['configured']) != ('FROZEN', stop, storage, 1):
+        raise RuntimeError(f'{name}: status {status}')
+    last = dict(configure='accepted', arm='accepted') if scenario.storage_full else dict(stop='accepted')
+    if {key: value for key, value in outcome.items() if value != 'none'} != last or (session, config_tag) != (arms, 1):
+        raise RuntimeError(f'{name}: outcome {outcome}, session {session}, config tag {config_tag}')
+    acct = [{counter: next(reads) | next(reads) << 32 for counter in COUNTERS} for _ in range(4)]
+    stale = [take('READ_STATUS'), next(reads)]
+    valid, length = take('READ_STATUS'), next(reads)
+    if stale != [dict(valid=0, stale=1), 0] or valid != dict(valid=1, stale=0) or length % page_bytes:
+        raise RuntimeError(f'{name}: readout window {stale} {valid} {length}')
+    image = b''.join(struct.pack('<I', value) for value in reads)[:length]
+    pages = [image[offset:offset + page_bytes] for offset in range(0, length, page_bytes)]
+    decoded = [decode_page(page, page_bytes=page_bytes) for page in pages]
+    events = [event for page in decoded for event in page['events']]
+    if any((page['generation'], page['session_id'], page['config_tag']) != (index, arms, 1)
+           for index, page in enumerate(decoded)):
+        raise RuntimeError(f'{name}: page identity or generation mismatch')
+    manifest = dict(schema_version=1, scope='event-fragment', provenance='model', session_id=arms, config_tag=1,
+                    page_bytes=page_bytes, source_profile='rv32-single-clock-v1', codecs=['raw-v1'],
+                    config_sha256='0' * 64, pages=[dict(generation=page['generation'], record_count=len(page['events']),
+                                                         payload_crc32=page['payload_crc32']) for page in decoded])
+    if decode_fragment(encode_fragment(pages, manifest))['events'] != tuple(events):
         raise RuntimeError(f'{name}: production fragment decode differs')
     table, bundles = expected(scenario)
-    kept = set(scenario.keep)
-    present = set()
-    for source in range(4):
-        counters = dump['acct'][source]
-        decoded = [event for event in events if event.source == source]
+    kept, present, waiting = set(scenario.keep), set(), 0
+    for source, counters in enumerate(acct):
+        decoded_source = [event for event in events if event.source == source]
         observed = counters['observed']
         if observed > len(table[source]) or (not scenario.storage_full and observed != len(table[source])):
             raise RuntimeError(f'{name}: source {source} observed {observed} of {len(table[source])}')
-        for event in decoded:
+        for event in decoded_source:
             if event.sequence >= observed or event != table[source][event.sequence] or event.observation.kind not in kept:
                 raise RuntimeError(f'{name}: source {source} decoded event differs from stimulus {event}')
             present.add((source, event.sequence))
-        sequences = [event.sequence for event in decoded]
-        if sequences != sorted(set(sequences)):
-            raise RuntimeError(f'{name}: source {source} order or duplication')
+        sequences = [event.sequence for event in decoded_source]
         eligible = [event.sequence for event in table[source][:observed] if event.observation.kind in kept]
-        if counters['filtered'] != observed - len(eligible) or \
-                observed != counters['filtered'] + counters['admitted'] + counters['dropped'] or \
-                counters['admitted'] != len(decoded) + counters['pending']:
-            raise RuntimeError(f'{name}: source {source} accounting {counters} for {len(decoded)} decoded')
-        if not scenario.storage_full and counters['pending']:
-            raise RuntimeError(f'{name}: complete drain left pending work')
-        if scenario.zero_drop and (counters['dropped'] or sequences != eligible):
+        waiting += counters['admitted'] - len(decoded_source)
+        if sequences != sorted(set(sequences)) or counters['filtered'] != observed - len(eligible) or \
+                counters['ingress_dropped'] != counters['fifo_dropped'] or \
+                observed != counters['filtered'] + counters['admitted'] + counters['ingress_dropped'] or \
+                not 0 <= counters['admitted'] - len(decoded_source) <= (16 if scenario.storage_full else 0):
+            raise RuntimeError(f'{name}: source {source} accounting {counters} for {len(decoded_source)} decoded')
+        if scenario.zero_drop and (counters['ingress_dropped'] or sequences != eligible):
             raise RuntimeError(f'{name}: source {source} lost eligible observations')
-    last = {source: max((event.sequence for event in events if event.source == source), default=-1) for source in range(4)}
+    newest = {source: max((event.sequence for event in events if event.source == source), default=-1) for source in range(4)}
     for group in bundles:
         members = [event for event in group if event.observation.kind in kept]
         source = group[0].source
-        if not members or members[-1].sequence >= dump['acct'][source]['observed'] or members[-1].sequence > last[source]:
-            continue
-        if len({(source, event.sequence) in present for event in members}) != 1:
+        if members and members[-1].sequence < acct[source]['observed'] and members[-1].sequence <= newest[source] \
+                and len({(source, event.sequence) in present for event in members}) != 1:
             raise RuntimeError(f'{name}: bundle admitted partially {members}')
-    return dict(records=len(events), pages=len(valid),
-                dropped=sum(counters['dropped'] for counters in dump['acct'].values()),
-                pending=sum(counters['pending'] for counters in dump['acct'].values()),
-                cycles=dump['cycles'], drain_cycles=dump['frozen_cycle'] - dump['stop_cycle'],
-                ready_fraction=round(dump['ready_cycles'] / dump['cycles'], 3),
-                kinds=sorted({event.observation.kind for event in events}),
+    return dict(records=len(events), pages=len(pages), dropped=sum(counters['ingress_dropped'] for counters in acct),
+                pending=waiting, drain_cycles=drain, kinds=len({event.observation.kind for event in events}),
                 lane1=sum(event.lane == 1 for event in events))
+
+
+ORDER = ('trace_reset', 'clear', 'configure', 'arm', 'stop', 'reset_source', 'software_trigger')
+
+
+def race_oracle(state, commands):
+    outcomes, blocked, following = {}, False, state
+    legal = dict(clear=state in ('DISABLED', 'FROZEN'), configure=state in ('DISABLED', 'FROZEN'),
+                 arm=state == 'DISABLED', stop=state == 'ARMED')
+    for name in ORDER:
+        if name in commands:
+            outcomes[name] = ('superseded' if blocked else 'ignored' if name == 'stop' and state == 'DRAINING'
+                              else 'accepted' if legal.get(name) else 'rejected')
+            if outcomes[name] == 'accepted' and name in ('clear', 'arm', 'stop'):
+                blocked = True
+                following = dict(clear='DISABLED', arm='ARMED', stop='FROZEN')[name]
+    return outcomes, following
+
+
+def race_script():
+    wait = f"u 4 {ADDRESS['STATUS']:x}"
+    kind, flags, words = slot_words(user(1))
+    lines, cases = ['cfg 100 5', cycle_line(0, 'w', 'COMMAND', pack('COMMAND', configure=1))], []
+    command = lambda **bits: lines.append(cycle_line(0, 'w', 'COMMAND', pack('COMMAND', **bits)))
+    lines.append(cycle_line(0, 'w', 'CFG_MODE', pack('CFG_MODE', codec='compact-v1', keep_kinds=0x7F)))
+    command(configure=1)
+    lines += [cycle_line(0, 'r', 'OUTCOME'), cycle_line(0, 'r', 'STATUS'),
+              cycle_line(0, 'w', 'CFG_MODE', pack('CFG_MODE', keep_kinds=0x7F))]
+    cases.append(('DISABLED', ('configure', 'compact codec'), dict(configure='rejected'), 'DISABLED'))
+    for state in ('DISABLED', 'ARMED', 'DRAINING', 'FROZEN'):
+        for size in range(len(ORDER) + 1):
+            for chosen in combinations(ORDER, size):
+                if state != 'DISABLED':
+                    command(arm=1)
+                if state == 'DRAINING':
+                    lines += [cycle_line(0), f"o {SLOTS['USER_EVENT']} {kind} {flags} " + ' '.join(f'{w:x}' for w in words)]
+                if state in ('DRAINING', 'FROZEN'):
+                    command(stop=1)
+                if state == 'FROZEN':
+                    lines.append(wait)
+                command(**dict.fromkeys(chosen, 1))
+                lines += [cycle_line(0)] * 4 + [cycle_line(0, 'r', 'OUTCOME'), cycle_line(0, 'r', 'STATUS')]
+                outcomes, following = race_oracle(state, chosen)
+                cases.append((state, chosen, outcomes, following))
+                if following == 'ARMED':
+                    command(stop=1)
+                if following != 'DISABLED':
+                    lines.append(wait)
+                    command(clear=1)
+    return '\n'.join(lines) + '\n', cases
+
+
+def score_races(dump, cases):
+    values = [int(line.split()[2]) for line in dump.splitlines() if line.startswith('r ')]
+    for index, (state, chosen, outcomes, following) in enumerate(cases):
+        outcome = {key: value for key, value in unpack('OUTCOME', values[2 * index]).items() if value != 'none'}
+        if outcome != outcomes or unpack('STATUS', values[2 * index + 1])['state'] != following:
+            raise RuntimeError(f'command race {state} {chosen}: {outcome} {unpack("STATUS", values[2 * index + 1])}')
+    return len(cases)
 
 
 def synthesize(folder):
     yosys = tool_path('yosys')
     if not yosys:
         return dict(status='unavailable', required=False)
-    script = folder / 'synth.ys'
-    script.write_text('\n'.join([
+    script_path = folder / 'synth.ys'
+    script_path.write_text('\n'.join([
         'read_slang ' + ' '.join(str(path.relative_to(ROOT)) for path in SOURCES) + ' --top chronos_capture -D SYNTHESIS',
         'hierarchy -check -top chronos_capture',
         'synth -flatten -top chronos_capture -run begin:fine',
@@ -318,65 +386,74 @@ def synthesize(folder):
         'check -assert',
         'stat',
     ]) + '\n')
-    run([yosys, '-m', 'slang', '-q', '-s', script, '-l', folder / 'synth.log'], folder / 'synth.out')
+    run([yosys, '-m', 'slang', '-q', '-s', script_path, '-l', folder / 'synth.log'], folder / 'synth.out')
     if 'Warning' in (folder / 'synth.log').read_text():
         raise RuntimeError('synthesis warnings; see build/rtl/synth.log')
     return dict(status='passed', frontend='yosys-slang plugin from the installed OSS CAD Suite',
-                scope='generic coarse synthesis; SRAM and four queues inferred as memories; '
-                'no technology mapping, timing, or area claim')
+                scope='generic coarse synthesis; SRAM and four queues inferred as memories; no mapping, timing, or area claim')
 
 
 def main():
     BUILD.mkdir(parents=True, exist_ok=True)
-    receipt = ROOT / 'build/p2a.json'
-    report = dict(status='failed', scope='P2a raw RTL capture vertical slice (Verilator simulation)')
+    receipt = ROOT / 'build/p2.json'
+    report = dict(status='failed', scope='P2 raw RTL capture with register interface (Verilator simulation)')
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     try:
         before = fingerprints()
-        verilator = require('verilator')
+        verilator = tool_path('verilator')
+        if not verilator:
+            raise RuntimeError('verilator is required; configure its path, no download attempted')
         for page_bytes in (256, 1024, 4096):
             text = run([verilator, '--lint-only', '-Wall', '--top-module', 'chronos_capture', f'-GPAGE_BYTES={page_bytes}',
                         *SOURCES], BUILD / f'lint-{page_bytes}.log')
             if '%Warning' in text or '%Error' in text:
                 raise RuntimeError(f'lint findings for {page_bytes}-byte pages')
-        report['lint'] = 'verilator -Wall clean for 256/1024/4096-byte pages'
-        binaries = {}
-        for page_bytes in (256, 1024, 4096):
-            folder = BUILD / f'obj{page_bytes}'
-            run([verilator, '--cc', '--exe', '--build', '--assert', '-Wall', '-O2', '--x-assign', 'unique', '--x-initial', 'unique',
-                 '--top-module', 'chronos_capture',
-                 f'-GPAGE_BYTES={page_bytes}', f'-GSRAM_BYTES={SRAM_BYTES}', '-CFLAGS',
-                 f'-DTB_PAGE_BYTES={page_bytes} -DTB_SRAM_BYTES={SRAM_BYTES}', '--Mdir', folder, *SOURCES,
-                 ROOT / 'tests/rtl/tb_capture.cpp', '-o', 'tb'], BUILD / f'build-{page_bytes}.log')
-            binaries[page_bytes] = folder / 'tb'
+            run([verilator, '--cc', '--exe', '--build', '--assert', '-Wall', '-O2', '--x-assign', 'unique',
+                 '--x-initial', 'unique', '--top-module', 'chronos_capture', f'-GPAGE_BYTES={page_bytes}',
+                 '--Mdir', BUILD / f'obj{page_bytes}', *SOURCES, ROOT / 'tests/rtl/tb_capture.cpp', '-o', 'tb'],
+                BUILD / f'build-{page_bytes}.log')
         results = {}
-        wide = ('each-kind', 'random-stalls', 'overload', 'storage-full')
+        wide = ('each-kind', 'random-stalls', 'overload', 'storage-full', 'max-record-rate')
         for scenario in scenarios():
+            text, arms = script(scenario)
             for page_bytes in (256, 1024, 4096) if scenario.name in wide else (1024,):
                 stem = BUILD / f'{scenario.name}-{page_bytes}'
-                write_stimulus(scenario, stem.with_suffix('.stim'))
-                run([binaries[page_bytes], stem.with_suffix('.stim'), stem.with_suffix('.dump')], stem.with_suffix('.log'))
-                results[f'{scenario.name}/{page_bytes}'] = score(scenario, parse(stem.with_suffix('.dump')), page_bytes)
-        rate = results['drain-rate/1024']
-        report['scenarios'] = results
-        report['throughput'] = dict(drain_cycles_per_record=round(rate['drain_cycles'] / rate['records'], 3),
-                                    records=rate['records'], note='sink always ready; includes page seal and header writes')
-        report['synthesis'] = synthesize(BUILD)
+                stem.with_suffix('.script').write_text(text)
+                run([BUILD / f'obj{page_bytes}/tb', stem.with_suffix('.script'), stem.with_suffix('.dump')],
+                    stem.with_suffix('.log'))
+                results[f'{scenario.name}/{page_bytes}'] = score(scenario, stem.with_suffix('.dump').read_text(), page_bytes, arms)
+        text, cases = race_script()
+        (BUILD / 'races.script').write_text(text)
+        run([BUILD / 'obj1024/tb', BUILD / 'races.script', BUILD / 'races.dump'], BUILD / 'races.log')
+        report['command_races'] = score_races((BUILD / 'races.dump').read_text(), cases)
+        config = read_json(ROOT / 'configs/baseline.json')
+        throughput = {}
+        for page_bytes in (256, 1024, 4096):
+            rate = results[f'max-record-rate/{page_bytes}']
+            envelope = service_envelope(dict(config, page_bytes=page_bytes,
+                                             pre_pages=SRAM_BYTES // page_bytes - 1, post_pages=1), 'raw-v1')
+            # Sustained full pages at the P1f rate, plus writing out the final partial page and a few control cycles.
+            bound = math.ceil(rate['records'] * envelope['cycles_per_event']) + page_bytes // 8 + 4
+            throughput[page_bytes] = dict(records=rate['records'], drain_cycles=rate['drain_cycles'], bound=bound,
+                                          envelope_cycles_per_event=round(envelope['cycles_per_event'], 3))
+            if rate['drain_cycles'] > bound:
+                raise RuntimeError(f'{page_bytes}-byte pages drain {rate["drain_cycles"]} cycles, envelope bound {bound}')
+        report.update(scenarios=results, throughput=throughput, synthesis=synthesize(BUILD))
         if before != fingerprints():
             raise RuntimeError('source changed during RTL checks')
         report.update(status='passed', source_sha256=before, pending=[
-            'register block implementing spec/registers.json and hardware readout image', 'source and trace reset',
-            'small-block formal checks', 'circular ring, triggers, compression in RTL (P3)', 'CPU qualification',
-            'physical board'])
-        print(f"PASS: P2a RTL vertical slice, {len(results)} scenario runs, "
+            'source and trace reset, circular ring, triggers, compression, and formal checks (P3)',
+            'CPU qualification', 'physical board'])
+        print(f"PASS: P2 RTL capture, {len(results)} register-driven scenario runs, "
               f"{sum(item['records'] for item in results.values())} records decoded by the production decoder")
-        print(f"Drain rate {report['throughput']['drain_cycles_per_record']} cycles/record; "
-              f"synthesis {report['synthesis']['status']}")
-        print('Receipt: build/p2a.json; logs and dumps: build/rtl/')
+        print(f"{report['command_races']} same-cycle command cases match the priority oracle")
+        print('Max-record drain within the P1f envelope: ' + ', '.join(
+            f"{size} B pages {item['drain_cycles']}/{item['bound']} cycles" for size, item in throughput.items()))
+        print('Receipt: build/p2.json; scripts and dumps: build/rtl/')
         return 0
-    except (OSError, ValueError, RuntimeError) as error:
-        report['error'] = str(error)
-        print(f'FAIL: {error}', file=sys.stderr)
+    except (OSError, ValueError, RuntimeError, StopIteration) as error:
+        report['error'] = str(error) or type(error).__name__
+        print(f'FAIL: {report["error"]}', file=sys.stderr)
         return 1
     finally:
         receipt.write_text(json.dumps(report, sort_keys=True, indent=2) + '\n')

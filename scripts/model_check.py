@@ -100,7 +100,7 @@ def main():
         if before != fingerprints():
             raise RuntimeError('source changed while model checks were running')
         report.update(status='passed', source_sha256=before)
-        print(f"PASS: P1a model, {result.testsRun} test methods; full P1 remains open")
+        print(f"PASS: P1a model, {result.testsRun} test methods")
         print('Reserve model: 16 post pages margin 3216 bytes; 8 post pages deficit 3448 bytes')
         print('Receipt: build/p1a.json')
         return 0
