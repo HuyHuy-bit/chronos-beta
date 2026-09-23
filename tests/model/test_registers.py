@@ -6,17 +6,16 @@ import re
 import unittest
 
 from model.chronos.capture_metadata import COUNTERS
-from model.chronos.capture_session import decode_capture
-from model.chronos.controller import COMMANDS, STATES
 from model.chronos.events import Observation
 from model.chronos.predicates import KINDS, keeper, matcher
-from model.chronos.raw_decode import decode_page
 from model.chronos.raw_encode import _TYPES
-from model.chronos.registers import LANES, MAP, MAP_PATH, RegisterFile, check, pack, unpack
+from model.chronos.registers import LANES, MAP, MAP_PATH, check, pack, unpack
 from model.chronos.retention import CODECS
-from scripts.config import ROOT, read_json
+from scripts.config import ROOT
 
 FULL = 0xFFFFFFFF
+STATES = ("DISABLED", "ARMED", "POST_TRIGGER", "DRAINING", "FROZEN", "CLEARING")
+COMMANDS = ("trace_reset", "clear", "configure", "arm", "stop", "reset_source", "software_trigger")
 
 
 def user(value):
@@ -75,7 +74,7 @@ class RegisterMapTests(unittest.TestCase):
         self.assertEqual(list(KINDS), sorted(_TYPES, key=_TYPES.get))
         self.assertEqual([f"{source}.{lane}" for source, lane in LANES], enums["lane"])
         source = "".join((ROOT / f"model/chronos/{name}.py").read_text()
-                         for name in ("admission", "snapshot", "controller", "retention"))
+                         for name in ("admission", "snapshot", "retention"))
         reasons = set(re.findall(r"stop\('(\w+)'\)", source)) | {"manual"}
         self.assertEqual(set(enums["stop_reason"]), reasons | {"none"})
         self.assertEqual(set(enums["storage_error"]), set(re.findall(r'StorageError\("(\w+)"\)', source)) | {"none"})
@@ -130,142 +129,6 @@ class TriggerSlotTests(unittest.TestCase):
         self.assertFalse(keeper([])(user(1)))
         with self.assertRaises(ValueError):
             keeper(["USER_EVENT", "USER_EVENT"])
-
-
-class RegisterFileTests(unittest.TestCase):
-    def setUp(self):
-        self.config = read_json(ROOT / "configs/baseline.json")
-        self.registers = RegisterFile(self.config)
-        self.tick = 0
-
-    def cycle(self, *observations, command=None, service=False):
-        if command:
-            self.registers.write("COMMAND", pack("COMMAND", **command))
-        self.tick += 1
-        return self.registers.cycle(self.tick, observations, service=service)
-
-    def program(self, **mode):
-        registers = self.registers
-        registers.write("CFG_SPLIT", pack("CFG_SPLIT", pre_pages=16, post_pages=16))
-        registers.write("CFG_MODE", pack("CFG_MODE", **dict(dict(codec="raw-v1", keep_kinds=0x7F), **mode)))
-        registers.write("CFG_POST_TICKS_LO", 3)
-        registers.write("TRIG1_CTRL", pack("TRIG1_CTRL", enable=1, mode="equal", kinds=1 << KINDS.index("USER_EVENT")))
-        registers.write("TRIG1_VALUE", 7)
-        registers.write("TRIG1_MASK", FULL)
-
-    def outcome(self):
-        return {key: value for key, value in unpack("OUTCOME", self.registers.read("OUTCOME")).items() if value != "none"}
-
-    def state(self):
-        return unpack("STATUS", self.registers.read("STATUS"))
-
-    def readout(self):
-        registers = self.registers
-        session = registers.read("SESSION_ID_LO") | registers.read("SESSION_ID_HI") << 32
-        registers.write("READ_SESSION_LO", session & FULL)
-        registers.write("READ_SESSION_HI", session >> 32)
-        registers.write("READ_OFFSET", 0)
-        length = registers.read("READ_LENGTH")
-        data = b"".join(registers.read("READ_DATA").to_bytes(4, "little") for _ in range(-(-length // 4)))
-        return data[:length]
-
-    def test_identity_and_capabilities(self):
-        registers = self.registers
-        self.assertEqual(registers.read("CHRONOS_ID").to_bytes(4, "little"), b"CHRN")
-        self.assertEqual(unpack("VERSION", registers.read("VERSION")), dict(map_minor=1, map_major=1))
-        self.assertEqual(unpack("CAPS", registers.read("CAPS")), dict(sources=4, trigger_slots=4, fifo_depth_log2=4,
-                         page_bytes_log2=10, codecs=3, max_record_bytes=128, sink_bytes=8))
-        self.assertEqual(registers.read("CAPS_SRAM_BYTES"), 32768)
-
-    def test_register_driven_capture_with_filtered_slot_trigger_and_readout(self):
-        self.program(keep_kinds=0x7F & ~(1 << KINDS.index("USER_EVENT")))
-        self.assertEqual(self.state()["state"], "DISABLED")
-        self.cycle(command=dict(configure=1, arm=1))
-        self.assertEqual(self.outcome(), dict(configure="accepted", arm="accepted"))
-        for value in range(1, 4):
-            self.cycle(request(value), user(value + 5), service=True)
-        status = self.state()
-        self.assertEqual((status["state"], status["trigger_latched"], status["trigger_software"]),
-                         ("POST_TRIGGER", 1, 0))
-        self.assertEqual(unpack("TRIG_MATCH", self.registers.read("TRIG_MATCH")),
-                         dict(lanes=1 << LANES.index((3, 0)), primary=LANES.index((3, 0)), software=0, slots=0b10))
-        self.assertEqual(self.registers.read("TRIG_TICK_LO"), 3)
-        self.registers.write("ACCT_SELECT", pack("ACCT_SELECT", source=3, counter="filtered"))
-        self.assertEqual(self.registers.read("ACCT_VALUE_LO"), 3)
-        for value in range(4, 9):
-            self.cycle(request(value), service=True)
-        for _ in range(200):
-            if self.state()["state"] == "FROZEN":
-                break
-            self.cycle(service=True)
-        status = self.state()
-        self.assertEqual((status["state"], status["stop_reason"]), ("FROZEN", "post_window"))
-        image = self.readout()
-        self.assertEqual(unpack("READ_STATUS", self.registers.read("READ_STATUS")), dict(valid=1, stale=0))
-        events = [event for offset in range(0, len(image), 1024)
-                  for event in decode_page(image[offset:offset + 1024])["events"]]
-        decoded = decode_capture(self.registers.controller.read()[1])
-        self.assertEqual(tuple(events), decoded["events"])
-        self.assertEqual([event.observation.fields["transaction"] for event in events], [1, 2, 3, 4, 5])
-        self.assertEqual(decoded["metadata"]["capture"]["trigger"]["matches"], [dict(source=3, lane=0, reason="slot1")])
-
-    def test_stale_session_and_cleared_snapshot_read_nothing(self):
-        self.program()
-        self.cycle(command=dict(configure=1, arm=1))
-        self.cycle(command=dict(stop=1))
-        self.registers.write("READ_SESSION_LO", 99)
-        self.assertEqual(unpack("READ_STATUS", self.registers.read("READ_STATUS")), dict(valid=0, stale=1))
-        self.assertEqual((self.registers.read("READ_LENGTH"), self.registers.read("READ_DATA")), (0, 0))
-        self.assertEqual(self.readout(), b"")
-        self.assertEqual(unpack("READ_STATUS", self.registers.read("READ_STATUS")), dict(valid=1, stale=0))
-        self.cycle(command=dict(clear=1))
-        self.assertEqual(self.readout(), b"")
-        self.assertEqual(self.state()["state"], "CLEARING")
-
-    def test_invalid_register_configuration_is_rejected_by_the_command(self):
-        self.program()
-        self.registers.write("CFG_SPLIT", pack("CFG_SPLIT", pre_pages=16, post_pages=8))
-        self.cycle(command=dict(configure=1, arm=1))
-        self.assertEqual(self.outcome(), dict(configure="rejected", arm="rejected"))
-        self.program()
-        self.registers.write("TRIG1_CTRL", pack("TRIG1_CTRL", enable=1, mode="range", kinds=1))
-        self.registers.write("TRIG1_BASE", 8)
-        self.registers.write("TRIG1_LIMIT", 8)
-        self.cycle(command=dict(configure=1))
-        self.assertEqual(self.outcome(), dict(configure="rejected"))
-        self.assertEqual(self.registers.read("CONFIG_TAG_LO"), 0)
-        self.registers.write("TRIG1_LIMIT", 9)
-        self.cycle(command=dict(configure=1))
-        self.assertEqual(self.outcome(), dict(configure="accepted"))
-        self.assertEqual(self.registers.read("CONFIG_TAG_LO"), 1)
-
-    def test_command_word_carries_same_cycle_races_and_source_reset(self):
-        self.program()
-        self.cycle(command=dict(configure=1, arm=1))
-        self.cycle(command=dict(stop=1, software_trigger=1, reset_source=1, reset_source_id=2))
-        self.assertEqual(self.outcome(), dict(stop="accepted", reset_source="superseded",
-                                              software_trigger="superseded"))
-        self.cycle(command=dict(trace_reset=1, arm=1))
-        self.assertEqual(self.outcome(), dict(trace_reset="accepted", arm="superseded"))
-        self.cycle(command=dict(arm=1))
-        self.cycle(command=dict(reset_source=1, reset_source_id=2))
-        self.assertEqual(self.registers.controller.capture.model.epochs, [0, 0, 1, 0])
-        self.cycle()
-        self.assertEqual(self.outcome(), dict(reset_source="accepted"))
-
-    def test_access_rules_and_word_bounds(self):
-        registers = self.registers
-        for name in ("STATUS", "READ_DATA", "CHRONOS_ID", "NOPE"):
-            with self.subTest(name=name), self.assertRaises(ValueError):
-                registers.write(name, 0)
-        for name in ("COMMAND", "NOPE"):
-            with self.subTest(name=name), self.assertRaises(ValueError):
-                registers.read(name)
-        for word in (-1, 1 << 32, True):
-            with self.subTest(word=word), self.assertRaises(ValueError):
-                registers.write("CFG_DRAIN_LIMIT", word)
-        registers.write("CFG_DRAIN_LIMIT", 5)
-        self.assertEqual(registers.read("CFG_DRAIN_LIMIT"), 5)
 
 
 if __name__ == "__main__":

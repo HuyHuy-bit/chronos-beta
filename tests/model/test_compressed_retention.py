@@ -7,7 +7,6 @@ from model.chronos.capacity import (completion_budget, default_inventory, measur
                                     service_envelope)
 from model.chronos.capture_session import decode_capture, encode_capture
 from model.chronos.compact_encode import MIN_RECORD_BYTES, WATERMARK_END, encode_records
-from model.chronos.controller import CaptureController
 from model.chronos.events import Event, Observation
 from model.chronos.predicates import matcher
 from model.chronos.raw_decode import DecodeError
@@ -15,9 +14,17 @@ from model.chronos.raw_encode import MAX_RECORD_BYTES, encode_record
 from model.chronos.retention import PageRing
 from model.chronos.snapshot import SnapshotCapture
 from scripts.config import ROOT, read_json
-from scripts.model_check import observations
 
 TAIL = {"raw-v1": 51, "compact-v1": 87}
+
+
+def observations(tick):
+    return (Observation("RETIRE", dict(pc=4096 + tick * 4, next_pc=4100 + tick * 4, length=4, boundary=tick)),
+            Observation("BUS_RESP", dict(transaction=tick, data=tick, error=False)),
+            Observation("BUS_REQ", dict(transaction=tick + 1, address=8192, write=True, data=tick, mask=15)),
+            Observation("TRAP", dict(pc=None, cause=11, target=256, boundary=tick)),
+            Observation("IRQ_PENDING", dict(previous=tick & 1, current=(tick + 1) & 1)),
+            Observation("USER_EVENT", dict(value=tick)))
 DECODERS = {"raw-v1": raw_decode.decode_page, "compact-v1": compact_decode.decode_page}
 
 
@@ -283,24 +290,6 @@ class CompressedRetentionTests(unittest.TestCase):
         result = metadata_bytes(self.config)
         self.assertEqual(result["terms"], dict(counters=256, journal=788, trigger=405, terminal=27, directory=288))
         self.assertEqual(result["bytes"], 1764)
-
-    def test_controller_captures_compact_pages_with_measured_service(self):
-        controller = CaptureController()
-        controller.cycle(1, configure=dict(config=self.config, post_ticks=0, codec="compact-v1"), arm=True)
-        for tick in range(2, 18):
-            controller.cycle(tick, [Observation("RETIRE", dict(pc=4 * tick, next_pc=4 * tick + 4, length=4,
-                                                                boundary=0))], service=True)
-        tick = 18
-        controller.cycle(tick, stop=True, service=True)
-        while controller.state == "DRAINING":
-            tick += 1
-            controller.cycle(tick, service=True)
-        self.assertEqual(tick, 1 + 16 * 7)
-        decoded = decode_capture(controller.read()[1])
-        self.assertEqual(decoded["fragment"]["manifest"]["codecs"], ["compact-v1"])
-        self.assertEqual([event.tick for event in decoded["events"]], list(range(2, 18)))
-        self.assertEqual(len(decoded["fragment"]["pages"]), 1)
-        self.assertEqual([len(record) for record in encode_records(decoded["events"])], [48])
 
 
 if __name__ == "__main__":

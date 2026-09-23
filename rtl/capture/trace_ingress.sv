@@ -5,6 +5,8 @@ module trace_ingress #(
     input  logic                   rst_ni,
     input  logic                   clear_i,
     input  logic                   open_i,
+    input  logic                   admit_i,
+    input  logic                   cap_block_i,
     input  logic [63:0]            tick_i,
     input  logic [6:0]             keep_kinds_i,
     input  logic [1:0]             valid_i,
@@ -13,25 +15,28 @@ module trace_ingress #(
     input  logic                   pop_i,
     output chronos_pkg::entry_t    head_o,
     output logic [$clog2(DEPTH):0] count_o,
+    output logic [1:0]             eligible_o,
+    output logic                   fits_o,
     output logic [63:0]            observed_o,
     output logic [63:0]            filtered_o,
     output logic [63:0]            admitted_o,
-    output logic [63:0]            dropped_o
+    output logic [63:0]            fifo_dropped_o,
+    output logic [63:0]            capacity_dropped_o
 );
-    logic [63:0] seq;
-    logic        a_valid, b_valid, a_keep, b_keep, admit;
-    chronos_pkg::obs_t        a;
-    logic [1:0]  observed, eligible;
-    chronos_pkg::entry_t      entry_a, entry_b;
+    logic [63:0]         seq;
+    logic                a_valid, b_valid, a_keep, b_keep;
+    chronos_pkg::obs_t   a;
+    logic [1:0]          observed;
+    chronos_pkg::entry_t entry_a, entry_b;
 
-    assign a_valid  = valid_i[0] | valid_i[1];
-    assign b_valid  = valid_i[0] & valid_i[1];
-    assign a        = valid_i[0] ? obs0_i : obs1_i;
-    assign a_keep   = a_valid && keep_kinds_i[a.kind - 3'd1];
-    assign b_keep   = b_valid && keep_kinds_i[obs1_i.kind - 3'd1];
-    assign observed = {1'b0, a_valid} + {1'b0, b_valid};
-    assign eligible = {1'b0, a_keep} + {1'b0, b_keep};
-    assign admit    = open_i && eligible != 2'd0 && 32'(eligible) + 32'(count_o) <= DEPTH;
+    assign a_valid    = valid_i[0] | valid_i[1];
+    assign b_valid    = valid_i[0] & valid_i[1];
+    assign a          = valid_i[0] ? obs0_i : obs1_i;
+    assign a_keep     = a_valid && keep_kinds_i[a.kind - 3'd1];
+    assign b_keep     = b_valid && keep_kinds_i[obs1_i.kind - 3'd1];
+    assign observed   = {1'b0, a_valid} + {1'b0, b_valid};
+    assign eligible_o = {1'b0, a_keep} + {1'b0, b_keep};
+    assign fits_o     = 32'(eligible_o) + 32'(count_o) <= DEPTH;
 
     always_comb begin
         entry_a         = '0;
@@ -51,8 +56,8 @@ module trace_ingress #(
 
     trace_fifo #(.W($bits(entry_a)), .DEPTH(DEPTH)) queue (
         .clk_i, .rst_ni, .clear_i,
-        .push0_i(admit),
-        .push1_i(admit && a_keep && b_keep),
+        .push0_i(admit_i),
+        .push1_i(admit_i && a_keep && b_keep),
         .data0_i(a_keep ? entry_a : entry_b),
         .data1_i(entry_b),
         .pop_i,
@@ -62,19 +67,22 @@ module trace_ingress #(
 
     always_ff @(posedge clk_i) begin
         if (!rst_ni || clear_i) begin
-            seq        <= '0;
-            observed_o <= '0;
-            filtered_o <= '0;
-            admitted_o <= '0;
-            dropped_o  <= '0;
+            seq                <= '0;
+            observed_o         <= '0;
+            filtered_o         <= '0;
+            admitted_o         <= '0;
+            fifo_dropped_o     <= '0;
+            capacity_dropped_o <= '0;
         end else if (open_i) begin
             seq        <= seq + 64'(observed);
             observed_o <= observed_o + 64'(observed);
-            filtered_o <= filtered_o + 64'(observed - eligible);
-            if (admit)
-                admitted_o <= admitted_o + 64'(eligible);
+            filtered_o <= filtered_o + 64'(observed - eligible_o);
+            if (admit_i)
+                admitted_o <= admitted_o + 64'(eligible_o);
+            else if (cap_block_i)
+                capacity_dropped_o <= capacity_dropped_o + 64'(eligible_o);
             else
-                dropped_o <= dropped_o + 64'(eligible);
+                fifo_dropped_o <= fifo_dropped_o + 64'(eligible_o);
         end
     end
 

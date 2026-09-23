@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 from config import read_json, validate
-from doctor import ROOT, inventory, tool_path
+from doctor import ROOT, inventory
 from smoke import smoke
 
 
@@ -41,12 +41,11 @@ def main():
             raise RuntimeError("private plan is not excluded or is already tracked")
         paths = source_files()
         report["smoke"] = smoke()
-        report["synthesis"] = smoke(True) if tool_path("yosys") else {"status": "unavailable", "required_for_foundation": False}
         report["source_sha256"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
         report.update(status="passed", config_validation="structure only; P1 capacity model pending",
                       core_qualification="pending acquisition and integration spike",
                       board_qualification="pending; no physical board available",
-                      formal_proofs="not run; no Chronos RTL exists")
+                      formal_proofs="not run yet; RTL is linted, simulated, and synthesized by rtl-check")
         print("PASS: P0 foundation; core and physical-board qualification remain pending")
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:

@@ -1,4 +1,4 @@
-// Linear page writer: generation equals slot; a sealed page is never rewritten until the next arm.
+// Ring page writer: prehistory slots rotate until pinned, then post slots fill in order; committed pinned pages are never rewritten.
 module trace_page_writer #(
     parameter int PAGE_BYTES = 1024,
     parameter int PAGES = 32
@@ -7,6 +7,8 @@ module trace_page_writer #(
     input  logic                                   rst_ni,
     input  logic                                   clear_i,
     input  logic                                   drain_i,
+    input  logic                                   pin_i,
+    input  logic [$clog2(PAGES):0]                 pre_pages_i,
     input  logic                                   sink_ready_i,
     input  logic [63:0]                            session_i,
     input  logic [63:0]                            config_tag_i,
@@ -19,7 +21,9 @@ module trace_page_writer #(
     output logic [7:0]                             wbe_o,
     output logic                                   done_o,
     output logic                                   storage_full_o,
-    output logic [$clog2(PAGES):0]                 committed_o
+    output logic [$clog2(PAGES):0]                 pre_ptr_o,
+    output logic [$clog2(PAGES):0]                 post_used_o,
+    output logic                                   wrapped_o
 );
     localparam int PAYLOAD = PAGE_BYTES - 64;
     localparam int AW      = $clog2(PAGES * PAGE_BYTES / 8);
@@ -29,15 +33,15 @@ module trace_page_writer #(
 
     state_e                  state;
     logic [1:0]              rr, pick;
-    logic                    any, fits, odd, pair, last, load, page_open, storage_full;
+    logic                    any, fits, odd, pair, last, load, room, page_open, storage_full, wrapped;
     logic [31:0]             rec [16];
     logic [3:0]              rec_len, rec_idx;
     logic [2:0]              hstep;
-    logic [63:0]             rec_tick, min_tick;
+    logic [63:0]             rec_tick, min_tick, gen;
     logic [63:0]             hdr [8];
     logic [OW-1:0]           ofs, plen, ofs_next, start;
     logic [31:0]             count, pcrc, hcrc;
-    logic [$clog2(PAGES):0]  slot;
+    logic [$clog2(PAGES):0]  slot, pre_ptr, post_used;
     logic [5:0]              len;
     logic [AW-1:0]           page_base;
     chronos_pkg::entry_t     head;
@@ -62,13 +66,14 @@ module trace_page_writer #(
     assign last      = state == RECORD && sink_ready_i && rec_idx + (pair ? 4'd2 : 4'd1) == rec_len;
     assign start     = state == RECORD ? ofs_next : page_open ? ofs : '0;
     assign fits      = 32'(start) + 32'(len) <= PAYLOAD;
-    assign load      = any && fits && (state == PICK ? page_open || 32'(slot) < PAGES : last);
+    assign room      = !pin_i || 32'(pre_pages_i) + 32'(post_used) < PAGES;
+    assign load      = any && fits && (state == PICK ? page_open || room : last);
     assign page_base = AW'(slot) * AW'(PAGE_BYTES / 8);
 
     always_comb begin
         hdr[0] = {16'd64, 8'd0, 8'd1, 32'h5052_4843};
         hdr[1] = session_i;
-        hdr[2] = 64'(slot);
+        hdr[2] = gen;
         hdr[3] = config_tag_i;
         hdr[4] = {count, 32'(plen)};
         hdr[5] = min_tick;
@@ -98,7 +103,10 @@ module trace_page_writer #(
         if (!rst_ni || clear_i) begin
             state        <= PICK;
             rr           <= 2'd0;
-            slot         <= '0;
+            gen          <= 64'd0;
+            pre_ptr      <= '0;
+            post_used    <= '0;
+            wrapped      <= 1'b0;
             page_open    <= 1'b0;
             storage_full <= 1'b0;
             ofs          <= '0;
@@ -120,6 +128,14 @@ module trace_page_writer #(
                 rr       <= pick + 2'd1;
                 state    <= RECORD;
                 if (!page_open) begin
+                    if (pin_i) begin
+                        slot      <= pre_pages_i + post_used;
+                        post_used <= post_used + 1'b1;
+                    end else begin
+                        slot    <= pre_ptr;
+                        pre_ptr <= pre_ptr + 1'b1 == pre_pages_i ? '0 : pre_ptr + 1'b1;
+                        wrapped <= wrapped || pre_ptr + 1'b1 == pre_pages_i;
+                    end
                     page_open <= 1'b1;
                     ofs       <= '0;
                     count     <= 32'd0;
@@ -164,7 +180,7 @@ module trace_page_writer #(
                 HEADER: if (sink_ready_i) begin
                     hstep <= hstep + 3'd1;
                     if (hstep == 3'd7) begin
-                        slot      <= slot + 1'b1;
+                        gen       <= gen + 64'd1;
                         page_open <= 1'b0;
                         state     <= PICK;
                     end
@@ -176,7 +192,9 @@ module trace_page_writer #(
 
     assign done_o         = state == DONE;
     assign storage_full_o = storage_full;
-    assign committed_o    = slot;
+    assign pre_ptr_o      = pre_ptr;
+    assign post_used_o    = post_used;
+    assign wrapped_o      = wrapped;
 
 `ifndef SYNTHESIS
     always_ff @(posedge clk_i) begin

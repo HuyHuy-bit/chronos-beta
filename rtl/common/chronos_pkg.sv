@@ -14,11 +14,6 @@ package chronos_pkg;
         logic [159:0] payload;
     } entry_t;
 
-    localparam logic [2:0] STATE_DISABLED = 3'd0;
-    localparam logic [2:0] STATE_ARMED    = 3'd1;
-    localparam logic [2:0] STATE_DRAINING = 3'd3;
-    localparam logic [2:0] STATE_FROZEN   = 3'd4;
-
     function automatic logic [5:0] record_bytes(input logic [2:0] kind);
         case (kind)
             3'd1, 3'd2, 3'd3: record_bytes = 6'd52;
