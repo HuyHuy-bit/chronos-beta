@@ -1,0 +1,8 @@
+`verilator_config
+// Upstream Ibex is imported unmodified; its lint policy is upstream's. Chronos-owned files keep -Wall.
+lint_off -file "*/third_party/ibex/*"
+lint_off -rule UNOPTFLAT -file "*/third_party/ibex/*"
+// The SoC leaves unused Ibex outputs (shadow ports, crash dump, most of RVFI) unconnected.
+lint_off -rule PINMISSING -file "*/examples/demo_soc/rtl/chronos_soc.sv"
+// Only the instruction-length bits of rvfi_insn are checked (no 16-bit instructions in the RV32 profile).
+lint_off -rule UNUSEDSIGNAL -file "*/examples/demo_soc/rtl/chronos_soc.sv" -match "*rvfi_insn*"

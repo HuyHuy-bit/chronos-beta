@@ -1,9 +1,9 @@
 PYTHON ?= python3
 
-.PHONY: help doctor config-check smoke foundation-check model-check rtl-check check
+.PHONY: help doctor config-check smoke foundation-check model-check rtl-check soc-check check
 
 help:
-	@printf '%s\n' 'doctor            Inventory required and optional local tools' 'config-check      Validate the configuration and its negative cases' 'smoke             Compile and inspect a freestanding RV32 firmware ELF' 'foundation-check  Tools, configuration, private-plan exclusion, and the RV32 probe' 'model-check       Run every model test (format, codecs, retention, capacity, registers)' 'rtl-check         Lint, simulate, score, and synthesize the Chronos RTL' 'check             Run foundation, model, and RTL checks'
+	@printf '%s\n' 'doctor            Inventory required and optional local tools' 'config-check      Validate the configuration and its negative cases' 'smoke             Compile and inspect a freestanding RV32 firmware ELF' 'foundation-check  Tools, configuration, private-plan exclusion, and the RV32 probe' 'model-check       Run every model test (format, codecs, retention, capacity, registers)' 'rtl-check         Lint, simulate, score, and synthesize the Chronos RTL' 'soc-check         Run firmware on the pinned Ibex demo SoC and check the capture' 'check             Run foundation, model, RTL, and SoC checks'
 
 doctor:
 	$(PYTHON) scripts/doctor.py
@@ -24,4 +24,7 @@ model-check:
 rtl-check:
 	$(PYTHON) -m scripts.rtl_check
 
-check: foundation-check model-check rtl-check
+soc-check:
+	$(PYTHON) -m scripts.soc_check
+
+check: foundation-check model-check rtl-check soc-check

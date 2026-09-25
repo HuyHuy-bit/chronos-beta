@@ -376,9 +376,12 @@ def script(scenario, page_bytes, codec):
                      else cycle_line(cycle['ready']))
         lines += [observation_line(item) for item in cycle['items']]
     lines.append(f"u 4 {ADDRESS['STATUS']:x}")
-    reads = ['CHRONOS_ID', 'VERSION', 'CAPS', 'CAPS_SRAM_BYTES', 'STATUS', 'OUTCOME', 'SESSION_ID_LO', 'CONFIG_TAG_LO',
-             'TRIG_TICK_LO', 'TRIG_MATCH']
-    lines += [cycle_line(1, 'r', name) for name in reads]
+    return '\n'.join(lines + readout(arms)) + '\n', arms
+
+
+def readout(arms):
+    lines = [cycle_line(1, 'r', name) for name in ('CHRONOS_ID', 'VERSION', 'CAPS', 'CAPS_SRAM_BYTES', 'STATUS', 'OUTCOME',
+                                                  'SESSION_ID_LO', 'CONFIG_TAG_LO', 'TRIG_TICK_LO', 'TRIG_MATCH')]
     for source in range(4):
         for counter in COUNTERS:
             lines.append(cycle_line(1, 'w', 'ACCT_SELECT', pack('ACCT_SELECT', source=source, counter=counter)))
@@ -386,8 +389,47 @@ def script(scenario, page_bytes, codec):
     lines += [cycle_line(1, 'w', 'READ_SESSION_LO', arms + 1), cycle_line(1, 'r', 'READ_STATUS'),
               cycle_line(1, 'r', 'READ_LENGTH'), cycle_line(1, 'w', 'READ_SESSION_LO', arms),
               cycle_line(1, 'r', 'READ_STATUS'), cycle_line(1, 'r', 'READ_LENGTH')]
-    lines += [cycle_line(1, 'r', 'READ_DATA')] * (SRAM_BYTES // 4)
-    return '\n'.join(lines) + '\n', arms
+    return lines + [cycle_line(1, 'r', 'READ_DATA')] * (SRAM_BYTES // 4)
+
+
+def read_back(name, dump, page_bytes):
+    reads = iter(int(line.split()[2]) for line in dump.splitlines() if line.startswith('r '))
+    take = lambda register: unpack(register, next(reads))
+    identity = [next(reads), take('VERSION'), take('CAPS'), next(reads)]
+    caps = dict(sources=4, trigger_slots=4, fifo_depth_log2=4, page_bytes_log2=page_bytes.bit_length() - 1, codecs=3,
+                max_record_bytes=128, sink_bytes=8)
+    if identity != [0x4E524843, dict(map_minor=1, map_major=1), caps, SRAM_BYTES]:
+        raise RuntimeError(f'{name}: identity registers {identity}')
+    result = dict(status=take('STATUS'), outcome=take('OUTCOME'), session=next(reads), config_tag=next(reads),
+                  latched=(next(reads), take('TRIG_MATCH')),
+                  acct=[{counter: next(reads) | next(reads) << 32 for counter in COUNTERS} for _ in range(4)])
+    stale = [take('READ_STATUS'), next(reads)]
+    valid, length = take('READ_STATUS'), next(reads)
+    if stale != [dict(valid=0, stale=1), 0] or valid != dict(valid=1, stale=0) or length % page_bytes:
+        raise RuntimeError(f'{name}: readout window {stale} {valid} {length}')
+    return dict(result, image=b''.join(struct.pack('<I', value) for value in reads)[:length])
+
+
+def decode_capture(name, image, page_bytes, codec, session):
+    encoder, decoder = CODECS[codec]
+    pages = [image[offset:offset + page_bytes] for offset in range(0, len(image), page_bytes)]
+    decoded = [decoder.decode_page(page, page_bytes=page_bytes) for page in pages]
+    for page, entry in zip(pages, decoded):
+        if encoder.encode_page(entry['events'], session_id=session, generation=entry['generation'], config_tag=1,
+                               page_bytes=page_bytes) != page:
+            raise RuntimeError(f"{name}: page {entry['generation']} differs from the model encoding of its events")
+    first = decoded[0]['generation'] if decoded else 0
+    if any((page['generation'], page['session_id'], page['config_tag']) != (first + index, session, 1)
+           for index, page in enumerate(decoded)):
+        raise RuntimeError(f'{name}: pages are not a consecutive generation suffix')
+    events = [event for page in decoded for event in page['events']]
+    manifest = dict(schema_version=1, scope='event-fragment', provenance='model', session_id=session, config_tag=1,
+                    page_bytes=page_bytes, source_profile='rv32-single-clock-v1', codecs=[codec],
+                    config_sha256='0' * 64, pages=[dict(generation=page['generation'], record_count=len(page['events']),
+                                                         payload_crc32=page['payload_crc32']) for page in decoded])
+    if decode_fragment(encode_fragment(pages, manifest))['events'] != tuple(events):
+        raise RuntimeError(f'{name}: production fragment decode differs')
+    return len(pages), first, events
 
 
 def expected(scenario):
@@ -439,18 +481,11 @@ def descriptor(trigger):
 
 
 def score(scenario, dump, page_bytes, arms, codec):
-    name, (encoder, decoder) = f'{scenario.name}/{codec}', CODECS[codec]
-    lines = [line.split() for line in dump.splitlines()]
-    drain = int(lines[0][1])
-    reads = iter(int(value) for tag, *rest in lines[1:] for value in rest[1:] if tag == 'r')
-    take = lambda register: unpack(register, next(reads))
-    identity = [next(reads), take('VERSION'), take('CAPS'), next(reads)]
-    status, outcome, session, config_tag = take('STATUS'), take('OUTCOME'), next(reads), next(reads)
-    latched = (next(reads), take('TRIG_MATCH'))
-    caps = dict(sources=4, trigger_slots=4, fifo_depth_log2=4, page_bytes_log2=page_bytes.bit_length() - 1, codecs=3,
-                max_record_bytes=128, sink_bytes=8)
-    if identity != [0x4E524843, dict(map_minor=1, map_major=1), caps, SRAM_BYTES]:
-        raise RuntimeError(f'{name}: identity registers {identity}')
+    name = f'{scenario.name}/{codec}'
+    drain = int(dump.split(maxsplit=2)[1])
+    back = read_back(name, dump, page_bytes)
+    status, outcome, session, config_tag, latched, acct = (back[key] for key in ('status', 'outcome', 'session',
+                                                                                 'config_tag', 'latched', 'acct'))
     table, bundles, trigger, pin = expected(scenario)
     if (status['state'], status['stop_reason'], status['storage_error'], status['configured'],
             status['trigger_latched'], status['trigger_software']) != \
@@ -462,29 +497,7 @@ def score(scenario, dump, page_bytes, arms, codec):
         raise RuntimeError(f'{name}: outcome {outcome}')
     if (session, config_tag) != (arms, 1):
         raise RuntimeError(f'{name}: session {session}, config tag {config_tag}')
-    acct = [{counter: next(reads) | next(reads) << 32 for counter in COUNTERS} for _ in range(4)]
-    stale = [take('READ_STATUS'), next(reads)]
-    valid, length = take('READ_STATUS'), next(reads)
-    if stale != [dict(valid=0, stale=1), 0] or valid != dict(valid=1, stale=0) or length % page_bytes:
-        raise RuntimeError(f'{name}: readout window {stale} {valid} {length}')
-    image = b''.join(struct.pack('<I', value) for value in reads)[:length]
-    pages = [image[offset:offset + page_bytes] for offset in range(0, length, page_bytes)]
-    decoded = [decoder.decode_page(page, page_bytes=page_bytes) for page in pages]
-    for page, entry in zip(pages, decoded):
-        if encoder.encode_page(entry['events'], session_id=arms, generation=entry['generation'], config_tag=1,
-                               page_bytes=page_bytes) != page:
-            raise RuntimeError(f"{name}: page {entry['generation']} differs from the model encoding of its events")
-    first = decoded[0]['generation'] if decoded else 0
-    if any((page['generation'], page['session_id'], page['config_tag']) != (first + index, arms, 1)
-           for index, page in enumerate(decoded)):
-        raise RuntimeError(f'{name}: pages are not a consecutive generation suffix')
-    events = [event for page in decoded for event in page['events']]
-    manifest = dict(schema_version=1, scope='event-fragment', provenance='model', session_id=arms, config_tag=1,
-                    page_bytes=page_bytes, source_profile='rv32-single-clock-v1', codecs=[codec],
-                    config_sha256='0' * 64, pages=[dict(generation=page['generation'], record_count=len(page['events']),
-                                                         payload_crc32=page['payload_crc32']) for page in decoded])
-    if decode_fragment(encode_fragment(pages, manifest))['events'] != tuple(events):
-        raise RuntimeError(f'{name}: production fragment decode differs')
+    pages, first, events = decode_capture(name, back['image'], page_bytes, codec, arms)
     kept, present, oldest = set(scenario.keep), set(), {}
     positions = [{(event.epoch, event.sequence): index for index, event in enumerate(events_of)} for events_of in table]
     for source, counters in enumerate(acct):
@@ -526,7 +539,7 @@ def score(scenario, dump, page_bytes, arms, codec):
         if members and members[0] >= oldest[source] and members[-1] < acct[source]['observed'] \
                 and len({(source, index) in present for index in members}) != 1 and not acct[source]['reset_discarded']:
             raise RuntimeError(f'{name}: bundle admitted partially {members}')
-    return dict(records=len(events), pages=len(pages), first_generation=first, evicted_events=evicted,
+    return dict(records=len(events), pages=pages, first_generation=first, evicted_events=evicted,
                 dropped=sum(counters['ingress_dropped'] for counters in acct),
                 capacity_dropped=sum(counters['capacity_dropped'] for counters in acct),
                 drain_cycles=drain, lane1=sum(event.lane == 1 for event in events))

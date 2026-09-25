@@ -1,17 +1,58 @@
 {
   "schema_version": 1,
-  "acquired": [],
-  "candidates": [
+  "acquired": [
     {
       "name": "ibex",
       "source": "https://github.com/lowRISC/ibex.git",
-      "candidate_revision": "405c6d1d8220a18b2f9196141167a5875422dee4",
-      "revision_observed_utc_date": "2026-09-08",
-      "revision_evidence": "git ls-remote HEAD and refs/heads/master",
-      "status": "not_acquired",
-      "integration_status": "not_qualified",
-      "license_review": "pending review of acquired source and transitive dependencies",
-      "intended_location": "third_party/ibex"
+      "revision": "405c6d1d8220a18b2f9196141167a5875422dee4",
+      "archive": "https://github.com/lowRISC/ibex/archive/405c6d1d8220a18b2f9196141167a5875422dee4.tar.gz",
+      "archive_sha256": "34fba9a683428bbe7ec05258eb1b9a340bf30f5e7804ffedf03afcdb97a37d82",
+      "acquired_utc_date": "2026-09-25",
+      "license": "Apache-2.0 (LICENSE and NOTICE kept)",
+      "local_modifications": "none; files are byte-identical to the archive",
+      "configuration": "upstream \"small\" (ibex_configs.yaml) with RVFI",
+      "location": "third_party/ibex",
+      "files": {
+        "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "NOTICE": "c1e9a919a0c950b77997dfff1878c76c6cbcc26a60e826c532f9e9513a0c5e4d",
+        "rtl/ibex_alu.sv": "06ce1c3ce30807f715478cf9e3bc279cac1c1cc2fb95d289516169fadcf7b7dc",
+        "rtl/ibex_cheriot_ex.sv": "9784c9376f8343cf8d435fe4b7ee9eeda02b15df6a5bc1dc6ef6fb1bddb1cba9",
+        "rtl/ibex_cheriot_pkg.sv": "d8b5b51ce99129ebd0c6436689cd85883760ca98f15f45c8a18b977549d007c4",
+        "rtl/ibex_compressed_decoder.sv": "bea22598e9e5f734ace93826eafd01914d2b63565ee0b7e8c8deff25369fbfbd",
+        "rtl/ibex_controller.sv": "bc3211faf87435b07922e3e61646ef83247ab86c5938d4cd2e108802a4357860",
+        "rtl/ibex_core.sv": "88b8bf3907472f1d413380f62234a7fbf53cb1de392a6660e6ef2d684a2416fd",
+        "rtl/ibex_counter.sv": "0e953e2e05b5070833029d0f6fed6d3a48fbd3c02dc05785962fb0d451425d8e",
+        "rtl/ibex_cs_registers.sv": "898d036f141bdf742c0c772a5493b4bccc9636ffd7c57d3cc37011d233954548",
+        "rtl/ibex_csr.sv": "6533fffc57e233b3961ebd94722a14a1a4320771ce4a76e69481bf2deb1d8514",
+        "rtl/ibex_decoder.sv": "842b520e4a942b6a27f3c44f7e8784e4a8dd40d7531a0ec3dd338f624be18217",
+        "rtl/ibex_dummy_instr.sv": "8899ec7fcd6df73d7ea96ad25e73f664ee2ae2a95b2186a36a7ab885e16e292e",
+        "rtl/ibex_ex_block.sv": "6451d5cd6af214b5fbb70f7499f898de981188cd7a25bf49247c0819b907c90b",
+        "rtl/ibex_fetch_fifo.sv": "3e0b48b771055ea50356cdff418decae16e7d9586a7f953e6799112b238bb63c",
+        "rtl/ibex_id_stage.sv": "02b40e46ef92df59a9e1d7b80a8d51a366ece0e8e599ca0744fcdf403ccd3aa8",
+        "rtl/ibex_if_stage.sv": "8b99f212f06aa942e53e8a768863587ffdc29176f5a486c6e273262311c9f6ae",
+        "rtl/ibex_load_store_unit.sv": "86e156efaf7ac46a351a405d9d2046b7d2e6a60bd206411ef9ae474666338b35",
+        "rtl/ibex_multdiv_fast.sv": "c86ca819b58b8ce2fc4ff5db887346bcd622b868fb7815fa07dd77119c68c04a",
+        "rtl/ibex_multdiv_slow.sv": "88b7392d3e2cd1f67f2c39b7425075030c78646cba2409356d6cfce262a46db6",
+        "rtl/ibex_pkg.sv": "d9bfed30b16dd77981f1850a8daf56fec5ce14043789b4a0a4506c833e9a7d5a",
+        "rtl/ibex_pmp.sv": "a564fb312d5337b0875d16f434e8b69348e12c2560548fad93f9270f9c4b9176",
+        "rtl/ibex_prefetch_buffer.sv": "988ca05039f033c0eef9feffba996771c3449f255c64d7d78de04e1984249ccc",
+        "rtl/ibex_register_file_ff.sv": "cb758da72120fa1ab7c3837408ef10ab96375edf727f6400d606ff5850e68a93",
+        "rtl/ibex_top.sv": "0db761a029b18d17271200a7ffe438c856db53423efa25912ba7ce60948cdfc5",
+        "rtl/ibex_wb_stage.sv": "872d8df3b3f3fd9ba781eabd3897bd3b74d2b3af2d2898ab5799371d05b04e8a",
+        "vendor/lowrisc_ip/dv/sv/dv_utils/dv_fcov_macros.svh": "d8d02ae47a12d78f611e15e4ab6e14775b55a0bdbb0815f36fbe8ddb242984ae",
+        "vendor/lowrisc_ip/ip/prim/rtl/prim_assert.sv": "d717d5dbcba3b5aa8a731ef9f8af18b036b49edef282f0a43a51f5ad2dd9bb40",
+        "vendor/lowrisc_ip/ip/prim/rtl/prim_assert_dummy_macros.svh": "cac4a930105da662547de873f0b80246074fb22df9a398663e1c8ac3e7998218",
+        "vendor/lowrisc_ip/ip/prim/rtl/prim_assert_sec_cm.svh": "25db89fe5f250c1bcbd808d0b4808206b9e85ac337b26e4ebb23f2ad569e1a13",
+        "vendor/lowrisc_ip/ip/prim/rtl/prim_assert_standard_macros.svh": "4835706249e017eae999256ea807c526a39a49729196fc0aa18bb8818de86ab6",
+        "vendor/lowrisc_ip/ip/prim/rtl/prim_assert_yosys_macros.svh": "d1fd8c350785a7c6d8cccc0b0c385392b71575397e7dc58c70f07716c8f9f3a3",
+        "vendor/lowrisc_ip/ip/prim/rtl/prim_flop_macros.sv": "2e8e6c2ee484899ae5d0020eaf0c9732c31537c60c30cb2a0a0acd2e92baee03",
+        "vendor/lowrisc_ip/ip/prim/rtl/prim_mubi_pkg.sv": "11a2f1a16ddaf750d859c95e07fc48c54743fe6ad3b5c5eabe2e14a51d9fb1af",
+        "vendor/lowrisc_ip/ip/prim/rtl/prim_secded_pkg.sv": "bcbd03333a30e7a1cb01195d1c40c7d0e736f91d9f73c2347ef5b0bd9dc3c82b",
+        "vendor/lowrisc_ip/ip/prim_generic/rtl/prim_buf.sv": "9b00bd8ac203169268262ac9337076781fa962b19beed36f28dde54e360aaaf5",
+        "vendor/lowrisc_ip/ip/prim_generic/rtl/prim_clock_gating.sv": "b2474320674e645d423f32ba1ce60b25509042d40c2de8fe28dcb7760a8fa882",
+        "vendor/lowrisc_ip/ip/prim_generic/rtl/prim_ram_1p_pkg.sv": "f51c6a588ec476b5cb2e95d9e8d19a67551732e9661a0c0933c6fccee8e92722"
+      }
     }
-  ]
+  ],
+  "candidates": []
 }
