@@ -1,0 +1,14 @@
+[options]
+mode prove
+depth 12
+
+[engines]
+smtbmc boolector
+
+[script]
+read -formal -DFORMAL trace_fifo.sv
+chparam -set W 8 -set DEPTH 4 trace_fifo
+prep -top trace_fifo
+
+[files]
+rtl/common/trace_fifo.sv

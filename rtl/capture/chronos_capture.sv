@@ -20,7 +20,8 @@ module chronos_capture #(
     localparam int PAGES  = SRAM_BYTES / PAGE_BYTES;
     localparam int WORDS  = SRAM_BYTES / 8;
     localparam int PW     = $clog2(PAGES);
-    // Measured worst-case raw record and sealed-page tail (model capacity.measured_inventory).
+    // Measured worst-case raw record and sealed-page tail (model capacity.measured_inventory). Compact pages seal
+    // only when a raw record does not fit either (trace_page_writer), so both codecs share the 51-byte tail.
     localparam int RECORD = 52, TAIL = 51;
     localparam logic [8:0] COMMAND = 9'h040, ACCT_SELECT = 9'h120, READ_SESSION_LO = 9'h140,
                            READ_SESSION_HI = 9'h144, READ_OFFSET = 9'h148, READ_DATA = 9'h150;
@@ -31,7 +32,7 @@ module chronos_capture #(
     logic [3:0]                   stop_reason, trig_slots, slots;
     logic [5:0]                   trig_lanes, lanes;
     logic                         configured, config_ok, cfg_hit, storage_full, done, write, read, command, idle;
-    logic                         blocked, clear_ok, configure_ok, arm_ok, stop_ok, soft_ok, open, triggered;
+    logic                         blocked, trace_ok, clear_ok, configure_ok, arm_ok, stop_ok, soft_ok, open, triggered;
     logic                         trig_software, trigger_now, capturing, valid, data_ok, data_q, half_q, wrapped;
     logic [4:0]                   cfg_index;
     logic [31:0]                  staged [24], active [24];
@@ -42,10 +43,12 @@ module chronos_capture #(
     logic [6:0]                   cmd, acct_select;
     logic [PW:0]                  ring_pre, pre_ptr, post_used, n_pre, first, page, slot;
     chronos_pkg::entry_t [3:0]    heads;
-    logic [3:0]                   pops, fits, admit, cap_block;
+    logic [3:0]                   pops, fits, admit, cap_block, resets;
     logic [1:0]                   eligible [4];
     logic [$clog2(FIFO_DEPTH):0]  counts [4];
     logic [63:0]                  observed [4], filtered [4], admitted [4], fifo_dropped [4], capacity_dropped [4];
+    logic [63:0]                  reset_discarded [4];
+    logic [3:0][63:0]             epochs;
     logic                         we;
     logic [$clog2(WORDS)-1:0]     waddr;
     logic [63:0]                  wdata, rdata;
@@ -64,7 +67,7 @@ module chronos_capture #(
                                                (reg_addr_i[8:7] == 2'b01 && reg_addr_i[4:0] < 5'h14));
         cfg_index = reg_addr_i[8:7] == 2'b01 ? 5'd4 + 5'(reg_addr_i[6:5]) * 5'd5 + 5'(reg_addr_i[4:2])
                                              : 5'(reg_addr_i[3:2]);
-        config_ok = staged[0][15:0] != 16'd0 && staged[0][31:16] != 16'd0 && !staged[1][0] &&
+        config_ok = staged[0][15:0] != 16'd0 && staged[0][31:16] != 16'd0 &&
                     32'(staged[0][15:0]) + 32'(staged[0][31:16]) == PAGES &&
                     32'(4 * FIFO_DEPTH * RECORD) + 32'(staged[0][31:16]) * TAIL <= 32'(staged[0][31:16]) * (PAGE_BYTES - 64);
         for (int t = 0; t < 4; t++) begin
@@ -75,14 +78,16 @@ module chronos_capture #(
     end
 
     // Same-cycle priority: trace_reset > clear > configure > arm > stop > reset_source > software_trigger.
-    // This build has no software trace reset or source reset, so those commands are rejected.
     always_comb begin
         for (int i = 0; i < 7; i++) outcomes[i] = 3'd0;
         blocked = 1'b0;
-        if (cmd[0]) outcomes[0] = REJECTED;
+        if (cmd[0]) begin
+            outcomes[0] = ACCEPTED;
+            blocked     = 1'b1;
+        end
         if (cmd[1]) begin
-            outcomes[1] = idle ? ACCEPTED : REJECTED;
-            blocked     = idle;
+            outcomes[1] = blocked ? SUPERSEDED : idle ? ACCEPTED : REJECTED;
+            blocked     = blocked || idle;
         end
         if (cmd[2]) outcomes[2] = blocked ? SUPERSEDED : idle && config_ok ? ACCEPTED : REJECTED;
         if (cmd[3]) begin
@@ -93,16 +98,20 @@ module chronos_capture #(
             outcomes[4] = blocked ? SUPERSEDED : capturing ? ACCEPTED : state == DRAINING ? IGNORED : REJECTED;
             blocked     = blocked || outcomes[4] == ACCEPTED;
         end
-        if (cmd[5]) outcomes[5] = blocked ? SUPERSEDED : REJECTED;
+        if (cmd[5]) outcomes[5] = blocked ? SUPERSEDED : capturing ? ACCEPTED : REJECTED;
         if (cmd[6]) outcomes[6] = blocked ? SUPERSEDED : state == ARMED ? ACCEPTED : state == POST_TRIGGER ? IGNORED : REJECTED;
     end
 
+    assign trace_ok     = outcomes[0] == ACCEPTED;
     assign clear_ok     = outcomes[1] == ACCEPTED;
     assign configure_ok = outcomes[2] == ACCEPTED;
     assign arm_ok       = outcomes[3] == ACCEPTED;
     assign stop_ok      = outcomes[4] == ACCEPTED;
     assign soft_ok      = outcomes[6] == ACCEPTED;
-    assign open         = capturing && !stop_ok && !storage_full;
+    for (genvar s = 0; s < 4; s++) begin : g_reset
+        assign resets[s] = outcomes[5] == ACCEPTED && reg_wdata_i[8:7] == 2'(s);
+    end
+    assign open         = capturing && !stop_ok && !trace_ok && !storage_full;
 
     // Trigger slots compare one key field per kind; the first matching cycle latches the descriptor.
     always_comb begin
@@ -136,8 +145,8 @@ module chronos_capture #(
     always_comb begin
         logic closed;
         payload  = 32'(active[0][31:16]) * (PAGE_BYTES - 64);
-        reserved = 32'(active[0][31:16]) * TAIL + RECORD * (post_completed + 32'(counts[0]) + 32'(counts[1])
-                                                            + 32'(counts[2]) + 32'(counts[3]));
+        reserved = 32'(active[0][31:16]) * TAIL + RECORD * post_completed;
+        for (int s = 0; s < 4; s++) if (!resets[s]) reserved = reserved + RECORD * 32'(counts[s]);
         closed   = 1'b0;
         for (int s = 0; s < 4; s++) begin
             cap_block[s] = (triggered || trigger_now) && eligible[s] != 2'd0 &&
@@ -175,7 +184,7 @@ module chronos_capture #(
                 config_tag <= config_tag + 64'd1;
                 configured <= 1'b1;
             end
-            if (clear_ok) begin
+            if (trace_ok || clear_ok) begin
                 state       <= DISABLED;
                 stop_reason <= 4'd0;
             end else if (arm_ok) begin
@@ -212,10 +221,11 @@ module chronos_capture #(
     for (genvar s = 0; s < 4; s++) begin : g_source
         trace_ingress #(.DEPTH(FIFO_DEPTH)) ingress (
             .clk_i, .rst_ni,
-            .clear_i(clear_ok || arm_ok),
+            .clear_i(trace_ok || clear_ok || arm_ok),
             .open_i(open),
             .admit_i(admit[s]),
             .cap_block_i(cap_block[s]),
+            .reset_i(resets[s]),
             .tick_i(tick),
             .keep_kinds_i(active[1][14:8]),
             .valid_i(obs_valid_i[2*s +: 2]),
@@ -230,21 +240,26 @@ module chronos_capture #(
             .filtered_o(filtered[s]),
             .admitted_o(admitted[s]),
             .fifo_dropped_o(fifo_dropped[s]),
-            .capacity_dropped_o(capacity_dropped[s])
+            .capacity_dropped_o(capacity_dropped[s]),
+            .reset_discarded_o(reset_discarded[s]),
+            .epoch_o(epochs[s])
         );
     end
 
     trace_page_writer #(.PAGE_BYTES(PAGE_BYTES), .PAGES(PAGES)) writer (
         .clk_i, .rst_ni,
-        .clear_i(clear_ok || arm_ok),
+        .clear_i(trace_ok || clear_ok || arm_ok),
         .drain_i(state == DRAINING),
         .pin_i(state == POST_TRIGGER || state == DRAINING || trigger_now || stop_ok),
+        .compact_i(active[1][0]),
         .pre_pages_i(ring_pre),
         .sink_ready_i,
         .session_i(session),
         .config_tag_i(config_tag),
         .head_i(heads),
-        .empty_i({counts[3] == '0, counts[2] == '0, counts[1] == '0, counts[0] == '0}),
+        .epoch_i(epochs),
+        .empty_i({counts[3] == '0, counts[2] == '0, counts[1] == '0, counts[0] == '0} | resets | {4{trace_ok}}),
+        .reset_i(resets[1:0]),
         .pop_o(pops),
         .we_o(we),
         .waddr_o(waddr),
@@ -284,6 +299,7 @@ module chronos_capture #(
             3'd1:    acct = filtered[acct_select[1:0]];
             3'd2:    acct = admitted[acct_select[1:0]];
             3'd3:    acct = fifo_dropped[acct_select[1:0]] + capacity_dropped[acct_select[1:0]];
+            3'd4:    acct = reset_discarded[acct_select[1:0]];
             3'd5:    acct = fifo_dropped[acct_select[1:0]];
             3'd6:    acct = capacity_dropped[acct_select[1:0]];
             default: acct = 64'd0;
@@ -292,7 +308,7 @@ module chronos_capture #(
             9'h000:  value = 32'h4E52_4843;
             9'h004:  value = 32'h0000_0101;
             9'h008:  value = 32'd4 | 32'd4 << 3 | 32'($clog2(FIFO_DEPTH)) << 6 | 32'($clog2(PAGE_BYTES)) << 10
-                             | 32'd1 << 14 | 32'd128 << 16 | 32'd8 << 24;
+                             | 32'd3 << 14 | 32'd128 << 16 | 32'd8 << 24;
             9'h00C:  value = SRAM_BYTES;
             9'h050:  value = 32'(state) | 32'(stop_reason) << 3 | 32'(storage_full) << 7 | 32'(triggered) << 10
                              | 32'(triggered && trig_software) << 11 | 32'(configured) << 12;
